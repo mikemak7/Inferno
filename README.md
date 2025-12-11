@@ -10,6 +10,7 @@
 [![Claude](https://img.shields.io/badge/AI-Claude%20Opus%204.5-orange.svg)](https://anthropic.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/INSTALL.md)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2.svg?logo=discord&logoColor=white)](https://discord.gg/P8Uqx5EkaA)
 
 [Installation](#installation) • [Features](#features) • [Architecture](#architecture) • [Documentation](#documentation)
 
@@ -518,6 +519,14 @@ inferno> report --format markdown
 - [ ] **Binary Exploitation** - Buffer overflow assistance, ROP chain building
 - [ ] **CI/CD Integration** - GitHub Actions, GitLab CI pipeline scanning
 - [ ] **Reporting API** - Export to Jira, DefectDojo, custom webhooks
+
+---
+
+## Community
+
+Join our Discord to connect with other security researchers, get help, and contribute to development:
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2.svg?logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/P8Uqx5EkaA)
 
 ---
 
