@@ -1075,10 +1075,10 @@ class InfernoShell:
                 display_output = str(final_output)
 
             console.print(Panel(
-                f"""[bold]Status:[/bold] {"completed" if result.success else "in_progress"}
+                f"""[bold]Status:[/bold] {"completed" if result.objective_met else "in_progress"}
 [bold]Duration:[/bold] {duration:.1f}s
 [bold]Turns:[/bold] {result.turns}
-[bold]Findings:[/bold] {len(result.findings) if result.findings else 0}
+[bold]Findings:[/bold] {result.findings_summary or "None"}
 
 [bold]Final Output:[/bold]
 {display_output}""",
