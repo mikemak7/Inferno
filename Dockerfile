@@ -118,9 +118,13 @@ RUN mkdir -p /opt/inferno/outputs \
     /root/.inferno \
     /workspace
 
-# Wordlists symlinks for convenience
-RUN ln -sf /usr/share/seclists /wordlists && \
-    ln -sf /usr/share/wordlists /usr/share/wordlists
+# Wordlists setup - decompress rockyou and create symlinks
+RUN if [ -f /usr/share/wordlists/rockyou.txt.gz ]; then \
+        gunzip -k /usr/share/wordlists/rockyou.txt.gz || true; \
+    fi && \
+    ln -sf /usr/share/seclists /wordlists && \
+    ln -sf /usr/share/wordlists /usr/share/wordlists && \
+    ln -sf /usr/share/wordlists/rockyou.txt /rockyou.txt
 
 # ============================================================================
 # ENVIRONMENT CONFIGURATION

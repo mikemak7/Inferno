@@ -557,6 +557,43 @@ socat TCP-LISTEN:8080,fork TCP:target.com:80  # Port forward
 
 ## Wordlists Setup
 
+### Rockyou.txt (Password Cracking)
+
+The famous 14 million password wordlist. Essential for password cracking and brute forcing.
+
+**macOS:**
+```bash
+# Download to ~/wordlists
+mkdir -p ~/wordlists
+curl -L https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt -o ~/wordlists/rockyou.txt
+
+# Or via wget
+wget https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt -P ~/wordlists/
+```
+
+**Linux (Kali/Ubuntu):**
+```bash
+# Kali - already installed, just decompress
+sudo gunzip /usr/share/wordlists/rockyou.txt.gz
+
+# Ubuntu - install wordlists package
+sudo apt install wordlists
+sudo gunzip /usr/share/wordlists/rockyou.txt.gz
+```
+
+**Docker (Inferno container):**
+```bash
+# Already available at:
+/usr/share/wordlists/rockyou.txt
+/rockyou.txt  # symlink for convenience
+```
+
+**Verify:**
+```bash
+wc -l ~/wordlists/rockyou.txt  # Should show ~14 million lines
+head -20 ~/wordlists/rockyou.txt
+```
+
 ### SecLists (Essential)
 
 ```bash
