@@ -538,8 +538,8 @@ This project stands on the shoulders of giants. Huge credits to the pioneering w
 | Project | Contribution |
 |---------|--------------|
 | **[CAI (Cybersecurity AI)](https://github.com/aliasrobotics/CAI)** | The foundational research and methodology for AI-powered security testing. CAI's approach to autonomous pentesting directly inspired Inferno's architecture. |
-| **[Cyber-autoagent](https://github.com/chatsecure/cyber-autoagent)** | Groundbreaking work on agent-based security automation and multi-step exploitation chains. |
-| **[Strix](https://github.com/strix-security/strix)** | Innovative techniques for LLM-driven vulnerability discovery and security reasoning. |
+| **[Cyber-AutoAgent](https://github.com/westonbrown/Cyber-AutoAgent)** | Groundbreaking work on agent-based security automation and multi-step exploitation chains. |
+| **[Strix](https://github.com/usestrix/strix)** | Innovative techniques for LLM-driven vulnerability discovery and security reasoning. |
 
 These projects demonstrated that AI agents could think like security researchers - Inferno builds on their vision.
 
