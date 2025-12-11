@@ -1,0 +1,74 @@
+## {{ finding.name }}
+
+**ID:** {{ finding.id | default('N/A') }}
+**Severity:** {{ finding.severity | upper }}
+**Category:** {{ finding.category | default('General') }}
+
+---
+
+### Summary
+
+{{ finding.description }}
+
+### Details
+
+| Property | Value |
+|----------|-------|
+| Location | {{ finding.location | default('N/A') }} |
+| CVE | {{ finding.cve | default('N/A') }} |
+| CWE | {{ finding.cwe | default('N/A') }} |
+| CVSS Score | {{ finding.cvss | default('N/A') }} |
+
+### Technical Analysis
+
+{{ finding.technical_details | default('No additional technical analysis available.') }}
+
+{% if finding.evidence %}
+### Evidence
+
+```
+{{ finding.evidence }}
+```
+{% endif %}
+
+{% if finding.request %}
+### Request
+
+```http
+{{ finding.request }}
+```
+{% endif %}
+
+{% if finding.response %}
+### Response
+
+```http
+{{ finding.response }}
+```
+{% endif %}
+
+{% if finding.steps_to_reproduce %}
+### Steps to Reproduce
+
+{% for step in finding.steps_to_reproduce %}
+{{ loop.index }}. {{ step }}
+{% endfor %}
+{% endif %}
+
+### Impact
+
+{{ finding.impact | default('This vulnerability poses a security risk that should be addressed.') }}
+
+### Remediation
+
+{{ finding.remediation | default('Implement appropriate security controls to address this vulnerability.') }}
+
+{% if finding.references %}
+### References
+
+{% for ref in finding.references %}
+- [{{ ref.title | default(ref) }}]({{ ref.url | default(ref) }})
+{% endfor %}
+{% endif %}
+
+---

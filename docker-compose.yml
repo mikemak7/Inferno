@@ -1,0 +1,109 @@
+# Inferno-AI Docker Compose
+# Cross-platform setup for Windows, macOS, and Linux
+#
+# Usage:
+#   docker-compose up -d              # Start all services
+#   docker-compose exec inferno bash  # Enter Inferno container
+#   docker-compose logs -f inferno    # View logs
+#   docker-compose down               # Stop all services
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # INFERNO - Main Agent Container
+  # ==========================================================================
+  inferno:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inferno-agent
+    hostname: inferno
+    volumes:
+      # Mount workspace for targets/outputs
+      - ./outputs:/opt/inferno/outputs
+      - ./workspace:/workspace
+      # Mount config (contains .env)
+      - ./.env:/config/.env:ro
+      # Mount source for development (optional, comment out for production)
+      - ./src:/opt/inferno/src
+    environment:
+      # Qdrant connection
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      # Pass through authentication (set in .env or host environment)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      - INFERNO_OAUTH_TOKEN=${INFERNO_OAUTH_TOKEN:-}
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    networks:
+      - inferno-net
+    # Keep container running
+    stdin_open: true
+    tty: true
+    # Security capabilities for network tools
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    # Restart policy
+    restart: unless-stopped
+
+  # ==========================================================================
+  # QDRANT - Vector Database for Memory
+  # ==========================================================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: inferno-qdrant
+    hostname: qdrant
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - inferno-net
+    restart: unless-stopped
+
+  # ==========================================================================
+  # KALI TOOLS - Standalone Kali container (alternative to built-in)
+  # ==========================================================================
+  # Uncomment if you want a separate Kali container instead of built-in tools
+  # kali:
+  #   image: kalilinux/kali-rolling
+  #   container_name: inferno-kali
+  #   hostname: kali
+  #   volumes:
+  #     - ./workspace:/workspace
+  #   networks:
+  #     - inferno-net
+  #   command: /bin/bash -c "apt-get update && apt-get install -y kali-linux-headless && tail -f /dev/null"
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - NET_RAW
+
+# ==========================================================================
+# NETWORKS
+# ==========================================================================
+networks:
+  inferno-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ==========================================================================
+# VOLUMES
+# ==========================================================================
+volumes:
+  qdrant_data:
+    driver: local
