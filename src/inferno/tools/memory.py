@@ -350,6 +350,7 @@ class QdrantConnector:
         self,
         collection_name: str,
         limit: int = 100,
+        memory_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Get all documents from a collection.
@@ -357,19 +358,35 @@ class QdrantConnector:
         Args:
             collection_name: Collection to query.
             limit: Maximum documents to return.
+            memory_type: Optional filter by metadata.type field.
 
         Returns:
             List of all documents.
         """
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+
         client = self._get_client()
 
         if not client.collection_exists(collection_name):
             return []
 
         try:
+            # Build filter if memory_type specified
+            scroll_filter = None
+            if memory_type:
+                scroll_filter = Filter(
+                    must=[
+                        FieldCondition(
+                            key="metadata.type",
+                            match=MatchValue(value=memory_type),
+                        )
+                    ]
+                )
+
             results, _ = client.scroll(
                 collection_name=collection_name,
                 limit=limit,
+                scroll_filter=scroll_filter,
             )
 
             return [
@@ -1545,6 +1562,7 @@ class MemoryTool(HybridTool):
             results = connector.get_all(
                 collection_name=collection_name,
                 limit=limit,
+                memory_type=memory_type if memory_type != "all" else None,
             )
 
         if not results:
