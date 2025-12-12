@@ -95,31 +95,25 @@ inferno shell
 
 **4 tools instead of 81.** The LLM already knows security tools - we just let it run commands.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        THE 4 CORE TOOLS                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────────┐    The agent decides what to run:                 │
-│  │  execute_command │    • nmap -sV -sC target.com                      │
-│  │     (Primary)    │    • sqlmap -u "http://..." --batch               │
-│  └────────┬─────────┘    • gobuster dir -u http://...                   │
-│           │              • nuclei -u http://... -t cves/                │
-│           │              • Any command it needs                         │
-│           ▼                                                              │
-│  ┌──────────────────┐                                                   │
-│  │   http_request   │    Advanced HTTP with auth, proxies, sessions     │
-│  └──────────────────┘                                                   │
-│                                                                          │
-│  ┌──────────────────┐                                                   │
-│  │      memory      │    Remember findings, learn patterns              │
-│  └──────────────────┘                                                   │
-│                                                                          │
-│  ┌──────────────────┐                                                   │
-│  │      think       │    Structured reasoning for complex decisions     │
-│  └──────────────────┘                                                   │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Core["THE 4 CORE TOOLS"]
+        direction TB
+        EXEC["⚡ execute_command<br/>(Primary Tool)"]
+        HTTP["🌐 http_request<br/>Auth • Proxies • Sessions"]
+        MEM["🧠 memory<br/>Store • Recall • Learn"]
+        THINK["💭 think<br/>Structured Reasoning"]
+    end
+
+    subgraph Commands["The Agent Decides What to Run"]
+        C1["nmap -sV -sC target.com"]
+        C2["sqlmap -u 'http://...' --batch"]
+        C3["gobuster dir -u http://..."]
+        C4["nuclei -u http://... -t cves/"]
+        C5["Any command it needs"]
+    end
+
+    EXEC --> C1 & C2 & C3 & C4 & C5
 ```
 
 **Why this works:** Claude already knows nmap, sqlmap, gobuster, hydra, and hundreds of other tools. Forcing it to select from 81 specialized wrappers creates cognitive overhead. Just let it run the command it wants.
@@ -128,45 +122,52 @@ inferno shell
 
 Coordinated specialists work in parallel, communicating via shared memory:
 
-```
-                           ┌─────────────────┐
-                           │  COORDINATOR    │
-                           │  (Strategy)     │
-                           └────────┬────────┘
-                                    │
-              ┌─────────────────────┼─────────────────────┐
-              │                     │                     │
-              ▼                     ▼                     ▼
-    ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-    │     RECON       │   │    SCANNER      │   │   EXPLOITER     │
-    │  • Subdomains   │   │  • Nuclei       │   │  • SQLMap       │
-    │  • Port scan    │   │  • CVE check    │   │  • XSS PoC      │
-    │  • Tech detect  │   │  • Misconfig    │   │  • Auth bypass  │
-    └────────┬────────┘   └────────┬────────┘   └────────┬────────┘
-             │                     │                     │
-             └─────────────────────┼─────────────────────┘
-                                   │
-                                   ▼
-                    ┌──────────────────────────┐
-                    │     SHARED MEMORY        │
-                    │     (Qdrant + Mem0)      │
-                    │  • Findings              │
-                    │  • Credentials           │
-                    │  • Attack paths          │
-                    └──────────────────────────┘
-                                   │
-              ┌────────────────────┼────────────────────┐
-              │                    │                    │
-              ▼                    ▼                    ▼
-    ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-    │   VALIDATOR     │   │ POST-EXPLOIT    │   │    REPORTER     │
-    │  • Verify PoC   │   │  • Priv esc     │   │  • Bug bounty   │
-    │  • Confirm vuln │   │  • Lateral move │   │  • Executive    │
-    │  • Rate impact  │   │  • Data access  │   │  • Technical    │
-    └─────────────────┘   └─────────────────┘   └─────────────────┘
+```mermaid
+flowchart TB
+    subgraph Coordinator["META COORDINATOR"]
+        MC[/"Plans • Spawns • Validates • Synthesizes<br/>NEVER executes commands"/]
+    end
+
+    subgraph Phase1["Phase 1: Discovery"]
+        RECON["🔍 RECON<br/>Subdomains • Ports<br/>Tech Detection"]
+        SCANNER["🎯 SCANNER<br/>Nuclei • CVEs<br/>Misconfigs"]
+    end
+
+    subgraph Phase2["Phase 2: Attack"]
+        EXPLOITER["💥 EXPLOITER<br/>SQLMap • XSS<br/>Auth Bypass"]
+        WAF["🛡️ WAF BYPASS<br/>Encoding • HPP<br/>Smuggling"]
+    end
+
+    subgraph Phase3["Phase 3: Validate & Report"]
+        VALIDATOR["✅ VALIDATOR<br/>Confirm PoCs<br/>Filter FPs"]
+        REPORTER["📝 REPORTER<br/>Bug Bounty<br/>Executive"]
+    end
+
+    subgraph Memory["SHARED MEMORY"]
+        MEM[("Qdrant + Mem0<br/>Findings • Creds<br/>Attack Chains")]
+    end
+
+    subgraph Bus["MESSAGE BUS"]
+        MSG["Real-time Events<br/>Finding Broadcasts<br/>Endpoint Discovery"]
+    end
+
+    MC --> RECON & SCANNER
+    MC --> EXPLOITER & WAF
+    MC --> VALIDATOR --> REPORTER
+
+    RECON & SCANNER --> MEM
+    EXPLOITER & WAF --> MEM
+    VALIDATOR & REPORTER --> MEM
+
+    MEM <--> MSG
+    MSG <--> RECON & SCANNER & EXPLOITER & WAF & VALIDATOR & REPORTER
 ```
 
-**Agents communicate in real-time** via MessageBus and persist findings to shared memory. The coordinator never executes commands - it only orchestrates.
+**Key Architecture Principles:**
+- **MetaCoordinator NEVER executes commands** - it only orchestrates worker agents
+- **Workers share memory** via Mem0/Qdrant (same operation_id)
+- **Real-time communication** via MessageBus (finding broadcasts, endpoint discovery)
+- **Findings are validated** before reporting - no false positives
 
 ### 4. Persistent Memory System
 
@@ -196,19 +197,17 @@ inferno> run
 
 Built-in safety without limiting capability:
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         SECURITY GUARDRAILS                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ✓ Scope Enforcement        Only tests authorized targets               │
-│  ✓ Dangerous Cmd Blocking   Prevents rm -rf /, fork bombs, etc.        │
-│  ✓ Credential Leak Detection Catches accidental secret exposure         │
-│  ✓ Unicode Homograph Guard   Blocks sneaky bypass attempts              │
-│  ✓ Rate Limiting            Adaptive throttling per domain              │
-│  ✓ Prompt Injection Defense  Sanitizes untrusted input                  │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Guards["SECURITY GUARDRAILS"]
+        direction TB
+        G1["✓ Scope Enforcement<br/>Only tests authorized targets"]
+        G2["✓ Dangerous Cmd Blocking<br/>Prevents rm -rf /, fork bombs"]
+        G3["✓ Credential Leak Detection<br/>Catches secret exposure"]
+        G4["✓ Unicode Homograph Guard<br/>Blocks sneaky bypasses"]
+        G5["✓ Rate Limiting<br/>Adaptive throttling per domain"]
+        G6["✓ Prompt Injection Defense<br/>Sanitizes untrusted input"]
+    end
 ```
 
 ### 6. Bug Bounty Report Generation
@@ -256,18 +255,27 @@ Rate limiting hit            →  Slow down, rotate user agents
 
 Never gets stuck in loops. Tracks every decision point:
 
-```
-Branch Tracker:
-├── [1] Initial recon
-│   ├── [1.1] Port scan → Found 80, 443, 8080
-│   └── [1.2] Subdomain enum → Found api., admin., dev.
-├── [2] Web testing on main site
-│   ├── [2.1] Directory brute → Found /admin (403)
-│   ├── [2.2] Parameter fuzzing → Found SQLi candidate
-│   └── [2.3] SQLi exploitation → CONFIRMED ✓
-└── [3] API testing
-    ├── [3.1] Endpoint discovery → 15 endpoints
-    └── [3.2] Auth testing → IDOR found ✓
+```mermaid
+flowchart TB
+    subgraph BT["BRANCH TRACKER"]
+        direction TB
+        R["[1] Initial Recon"]
+        R1["[1.1] Port scan<br/>→ Found 80, 443, 8080"]
+        R2["[1.2] Subdomain enum<br/>→ Found api., admin., dev."]
+
+        W["[2] Web Testing"]
+        W1["[2.1] Directory brute<br/>→ Found /admin (403)"]
+        W2["[2.2] Parameter fuzzing<br/>→ Found SQLi candidate"]
+        W3["[2.3] SQLi exploitation<br/>→ CONFIRMED ✓"]
+
+        A["[3] API Testing"]
+        A1["[3.1] Endpoint discovery<br/>→ 15 endpoints"]
+        A2["[3.2] Auth testing<br/>→ IDOR found ✓"]
+    end
+
+    R --> R1 & R2
+    W --> W1 --> W2 --> W3
+    A --> A1 & A2
 ```
 
 ---
@@ -356,39 +364,79 @@ inferno> report --format markdown
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              INFERNO-AI                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                    │
-│  │   CLI       │────▶│   Agent     │────▶│   Tools     │                    │
-│  │   Shell     │     │   Executor  │     │   Registry  │                    │
-│  └─────────────┘     └──────┬──────┘     └─────────────┘                    │
-│                             │                                                │
-│         ┌───────────────────┼───────────────────┐                           │
-│         │                   │                   │                           │
-│         ▼                   ▼                   ▼                           │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                    │
-│  │   Claude    │     │   Swarm     │     │   Memory    │                    │
-│  │   API       │     │ Coordinator │     │   (Qdrant)  │                    │
-│  │  (Opus 4.5) │     │             │     │             │                    │
-│  └─────────────┘     └──────┬──────┘     └─────────────┘                    │
-│                             │                                                │
-│         ┌───────────────────┼───────────────────┐                           │
-│         │                   │                   │                           │
-│         ▼                   ▼                   ▼                           │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                    │
-│  │   Scope     │     │  Guardrails │     │   Branch    │                    │
-│  │   Manager   │     │             │     │   Tracker   │                    │
-│  └─────────────┘     └─────────────┘     └─────────────┘                    │
-│                                                                              │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                        SECURITY TOOLS (External)                      │   │
-│  │   nmap • sqlmap • gobuster • nuclei • hydra • nikto • ffuf • ...    │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph User["USER INTERFACE"]
+        CLI["CLI Shell<br/>inferno shell"]
+    end
+
+    subgraph Core["AGENT CORE"]
+        EXEC["Agent Executor<br/>SDKExecutor"]
+        CLAUDE["Claude API<br/>Opus 4.5"]
+    end
+
+    subgraph Tools["4 CORE TOOLS"]
+        CMD["execute_command<br/>Any security tool"]
+        HTTP["http_request<br/>Advanced HTTP"]
+        MEM["memory<br/>Store/Recall"]
+        THINK["think<br/>Reasoning"]
+    end
+
+    subgraph Meta["META COORDINATOR"]
+        direction TB
+        COORD["Coordinator<br/>(Never executes)"]
+
+        subgraph Workers["WORKER AGENTS"]
+            direction LR
+            W1["🔍 Recon"]
+            W2["🎯 Scanner"]
+            W3["💥 Exploiter"]
+            W4["✅ Validator"]
+            W5["📝 Reporter"]
+        end
+    end
+
+    subgraph Intel["INTELLIGENT EXPLOITATION ENGINE"]
+        direction LR
+        HINT["Hint<br/>Extractor"]
+        RESP["Response<br/>Analyzer"]
+        DIFF["Differential<br/>Analyzer"]
+        MUT["Payload<br/>Mutator"]
+        ATK["Attack<br/>Selector"]
+        VAL["Validation<br/>Gate"]
+    end
+
+    subgraph Safety["SAFETY LAYER"]
+        SCOPE["Scope Manager"]
+        GUARD["Guardrails"]
+        BRANCH["Branch Tracker"]
+    end
+
+    subgraph Storage["STORAGE"]
+        QDRANT[("Qdrant<br/>Vector Memory")]
+        BUS["MessageBus<br/>Real-time Events"]
+    end
+
+    subgraph External["SECURITY TOOLS"]
+        TOOLS["nmap • sqlmap • gobuster<br/>nuclei • hydra • nikto • ffuf"]
+    end
+
+    CLI --> EXEC
+    EXEC <--> CLAUDE
+    EXEC --> Tools
+    CMD --> TOOLS
+
+    EXEC --> COORD
+    COORD --> Workers
+    W1 & W2 & W3 & W4 & W5 --> Tools
+
+    W3 --> Intel
+    Intel --> MUT
+
+    Tools --> Safety
+    COORD --> QDRANT
+    Workers <--> BUS
+    BUS <--> QDRANT
 ```
 
 ### Component Overview
@@ -397,11 +445,54 @@ inferno> report --format markdown
 |-----------|---------|
 | **CLI Shell** | Interactive command interface |
 | **Agent Executor** | Orchestrates Claude conversations |
-| **Swarm Coordinator** | Manages multi-agent collaboration |
+| **Meta Coordinator** | Coordinates worker agents (never executes directly) |
+| **Worker Agents** | Specialized agents: Recon, Scanner, Exploiter, Validator, Reporter |
 | **Memory (Qdrant)** | Vector database for persistent knowledge |
+| **MessageBus** | Real-time inter-agent communication |
 | **Scope Manager** | Enforces authorized testing boundaries |
 | **Guardrails** | Security policies and safety checks |
 | **Branch Tracker** | Decision tracking and backtracking |
+
+### Intelligent Exploitation Engine
+
+```mermaid
+flowchart LR
+    subgraph Input["INPUT"]
+        REQ["HTTP Response"]
+        BLOCK["Blocked Request"]
+        TECH["Technology Stack"]
+    end
+
+    subgraph Engine["INTELLIGENT EXPLOITATION ENGINE"]
+        direction TB
+        HINT["🔍 Hint Extractor<br/>HTML comments • Errors<br/>Tech fingerprints"]
+        RESP["🛡️ Response Analyzer<br/>WAF Detection<br/>CloudFlare • AWS • ModSec"]
+        DIFF["📊 Differential Analyzer<br/>Boolean-based detection<br/>Time-based blind"]
+        MUT["🔄 Payload Mutator<br/>Encoding • Case mixing<br/>HPP • Comments"]
+        ATK["🎯 Attack Selector<br/>Tech → Attack mapping<br/>Learning from history"]
+        VAL["✅ Validation Gate<br/>Re-exploit to confirm<br/>Zero false positives"]
+    end
+
+    subgraph Output["OUTPUT"]
+        BYPASS["Bypass Payloads"]
+        PLAN["Attack Plan"]
+        CONF["Confirmed Finding"]
+    end
+
+    REQ --> HINT --> ATK
+    BLOCK --> RESP --> MUT --> BYPASS
+    TECH --> ATK --> PLAN
+    REQ --> DIFF --> VAL --> CONF
+```
+
+| Component | Purpose |
+|-----------|---------|
+| **Hint Extractor** | Extracts hints from HTML comments, errors, headers. Detects PHP, Node, Python, Java fingerprints. |
+| **Response Analyzer** | Detects WAFs (CloudFlare, AWS, ModSecurity, etc.) and suggests targeted bypass techniques. |
+| **Differential Analyzer** | Compares responses for blind injection detection (boolean-based, time-based). |
+| **Payload Mutator** | Auto-generates bypass payloads: encoding, case mixing, comment injection, HPP. |
+| **Attack Selector** | Maps detected technologies to prioritized attack vectors. Learns from success/failure. |
+| **Validation Gate** | Re-exploits findings to confirm before reporting. Eliminates false positives. |
 
 ---
 
