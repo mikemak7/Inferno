@@ -22,6 +22,7 @@ _nvd_tool_instance = None
 # Global state for the memory tool instance
 _memory_tool_instance = None
 _operation_id: str | None = None
+_current_target: str | None = None
 
 
 def set_operation_id(op_id: str) -> None:
@@ -30,6 +31,15 @@ def set_operation_id(op_id: str) -> None:
     _operation_id = op_id
     if _memory_tool_instance:
         _memory_tool_instance.set_operation_id(op_id)
+
+
+def set_target(target: str) -> None:
+    """Set the current target for memory scoping."""
+    global _current_target, _memory_tool_instance
+    _current_target = target
+    if _memory_tool_instance:
+        _memory_tool_instance.set_target(target)
+    logger.info("mcp_memory_target_set", target=target)
 
 
 def configure_memory(
@@ -71,7 +81,7 @@ def configure_memory(
 
 def _get_memory_tool():
     """Get or create the memory tool instance."""
-    global _memory_tool_instance, _operation_id
+    global _memory_tool_instance, _operation_id, _current_target
 
     if _memory_tool_instance is None:
         from inferno.tools.memory import MemoryToolWithFallback
@@ -79,6 +89,9 @@ def _get_memory_tool():
         _memory_tool_instance = MemoryToolWithFallback(
             operation_id=_operation_id,
         )
+        # Set target if already configured
+        if _current_target:
+            _memory_tool_instance.set_target(_current_target)
 
     return _memory_tool_instance
 
@@ -165,11 +178,16 @@ async def memory_store(args: dict[str, Any]) -> dict[str, Any]:
     if args.get("severity"):
         metadata["severity"] = args["severity"]
 
+    # Add proof to metadata
+    if args.get("proof"):
+        metadata["proof"] = args["proof"]
+
     result = await mem_tool.execute(
         operation="store",
         content=args["content"],
         memory_type=args.get("memory_type", "findings"),
         metadata=metadata,
+        target=_current_target,  # Pass global target for episodic memory
     )
 
     if result.success:
@@ -205,12 +223,16 @@ async def memory_search(args: dict[str, Any]) -> dict[str, Any]:
     """Search Mem0/Qdrant semantic memory."""
     mem_tool = _get_memory_tool()
 
+    # Default to 0.5 threshold (0.7 was too strict)
+    threshold = args.get("threshold", 0.5)
+
     result = await mem_tool.execute(
         operation="search",
         content=args["query"],
         memory_type=args.get("memory_type", "findings"),
         limit=args.get("limit", 10),
-        threshold=args.get("threshold", 0.7),
+        threshold=threshold,
+        target=_current_target,  # Pass global target for episodic memory
     )
 
     if result.success:
@@ -247,6 +269,7 @@ async def memory_list(args: dict[str, Any]) -> dict[str, Any]:
         operation="list",
         memory_type=args.get("memory_type", "findings"),
         limit=args.get("limit", 10),
+        target=_current_target,  # Pass global target for episodic memory
     )
 
     if result.success:

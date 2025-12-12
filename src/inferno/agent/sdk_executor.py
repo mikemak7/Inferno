@@ -37,7 +37,7 @@ from claude_agent_sdk import (
 )
 
 from inferno.config.settings import InfernoSettings
-from inferno.agent.mcp_tools import create_inferno_mcp_server, set_operation_id, configure_memory
+from inferno.agent.mcp_tools import create_inferno_mcp_server, set_operation_id, configure_memory, set_target
 
 # Memory tool (kept)
 try:
@@ -1224,6 +1224,7 @@ The system automatically monitors progress and can suggest when to try different
         # Configure Mem0/Qdrant memory backend EARLY (needed for auto-search)
         # This ensures auto-memory search uses the same Qdrant instance as the rest of the system
         set_operation_id(operation_id)
+        set_target(config.target)  # Set target for episodic memory scoping
         api_key = None
         if self._settings:
             provider = self._settings.memory.embedding_provider.value
@@ -1257,9 +1258,11 @@ The system automatically monitors progress and can suggest when to try different
                         ollama_host=self._settings.memory.ollama_host,
                         api_key=api_key,
                     )
+                    self._memory_tool.set_target(config.target)  # Set target for episodic memory
                     logger.info("memory_tool_configured_for_auto_search",
                         qdrant_host=self._settings.memory.qdrant_host,
-                        collection=self._settings.memory.qdrant_collection)
+                        collection=self._settings.memory.qdrant_collection,
+                        target=config.target)
                 except Exception as e:
                     logger.warning("memory_tool_reconfig_failed", error=str(e))
 
