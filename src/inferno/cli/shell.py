@@ -1074,17 +1074,27 @@ class InfernoShell:
             else:
                 display_output = str(final_output)
 
+            # Build trace info if available
+            trace_info = ""
+            if result.trace_html_path:
+                trace_info = f"\n[bold]Session Trace:[/bold] {result.trace_html_path}"
+
             console.print(Panel(
                 f"""[bold]Status:[/bold] {"completed" if result.objective_met else "in_progress"}
 [bold]Duration:[/bold] {duration:.1f}s
 [bold]Turns:[/bold] {result.turns}
-[bold]Findings:[/bold] {result.findings_summary or "None"}
+[bold]Findings:[/bold] {result.findings_summary or "None"}{trace_info}
 
 [bold]Final Output:[/bold]
 {display_output}""",
                 title="[bold cyan]Assessment Complete[/bold cyan]",
                 border_style="cyan",
             ))
+
+            # Print trace path prominently
+            if result.trace_html_path:
+                console.print(f"\n[bold green]📋 Session trace saved:[/bold green] {result.trace_html_path}")
+                console.print(f"[dim]View with: open {result.trace_html_path}[/dim]")
 
             # Store for interactive chat
             self._last_executor = executor
