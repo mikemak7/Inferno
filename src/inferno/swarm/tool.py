@@ -356,14 +356,20 @@ You are a specialized security testing AI assistant embedded within **Inferno**,
                 return PermissionResultAllow()
 
             # Configure SDK options for subagent
+            # Note: cwd is required for built-in Bash tool to work
+            import tempfile
+            subagent_cwd = tempfile.mkdtemp(prefix=f"inferno_subagent_{agent_type}_")
+
             options = ClaudeAgentOptions(
                 max_turns=config.max_turns,
                 system_prompt=system_prompt,
                 permission_mode="bypassPermissions",
+                cwd=subagent_cwd,  # Required for Bash tool
                 mcp_servers={"inferno-subagent": subagent_mcp},
                 can_use_tool=auto_approve_tools,
                 model=self._model,
             )
+            console.print(f"[magenta]│[/magenta] [dim]Working dir: {subagent_cwd}[/dim]")
 
             # Track metrics
             turns = 0
@@ -377,14 +383,23 @@ You are a specialized security testing AI assistant embedded within **Inferno**,
                 await client.query(f"Execute the following task: {task}")
 
                 # Process response stream
+                tool_calls_this_turn = 0
                 async for message in client.receive_response():
                     if isinstance(message, AssistantMessage):
                         turns += 1
+                        tool_calls_this_turn = 0
                         console.print(f"[magenta]│[/magenta] [dim]Turn {turns}/{config.max_turns}[/dim]")
+
+                        # Log content block types for debugging
+                        block_types = [type(b).__name__ for b in message.content]
+                        logger.debug("subagent_turn", turn=turns, blocks=block_types)
 
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 final_message = block.text
+                                # Show text preview
+                                text_preview = block.text[:100].replace('\n', ' ')
+                                console.print(f"[magenta]│[/magenta] [dim]📝 {text_preview}...[/dim]")
 
                                 # Check for findings
                                 text_lower = block.text.lower()
@@ -396,6 +411,7 @@ You are a specialized security testing AI assistant embedded within **Inferno**,
                                     objective_met = True
 
                             elif isinstance(block, ToolUseBlock):
+                                tool_calls_this_turn += 1
                                 # Subagent tool calls: » prefix (cyan) to distinguish from main agent ▶
                                 tool_name = block.name.replace("mcp__inferno__", "").replace("mcp__", "")
                                 tool_input = getattr(block, 'input', {})
@@ -412,8 +428,13 @@ You are a specialized security testing AI assistant embedded within **Inferno**,
                                     preview = block.thinking[:80].replace('\n', ' ')
                                     console.print(f"[magenta]│[/magenta] [dim italic]💭 {preview}...[/dim italic]")
 
+                        # Warn if no tools used this turn
+                        if tool_calls_this_turn == 0:
+                            console.print("[magenta]│[/magenta] [yellow]⚠ No tool calls this turn[/yellow]")
+
                     elif isinstance(message, ResultMessage):
-                        # Agent completed
+                        # Agent completed - log why
+                        console.print("[magenta]│[/magenta] [dim]ResultMessage received - agent stopping[/dim]")
                         objective_met = True
                         break
 
