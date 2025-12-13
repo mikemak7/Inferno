@@ -30,13 +30,21 @@ import functools
 import os
 import re
 import threading
-import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Pattern, TypeVar, Union
 
 import structlog
+
+# Import homograph detection from canonical source
+from inferno.core.unicode_security import (
+    normalize_text as normalize_unicode_homographs,
+    detect_homograph_bypass,
+    ALL_LOOKALIKES,
+    CONFUSABLES,
+    ZERO_WIDTH_CHARS,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -149,121 +157,15 @@ INJECTION_PATTERNS = [
 
 # =============================================================================
 # UNICODE HOMOGRAPH NORMALIZATION
+# Note: Implementation moved to unicode_security.py. Imports are at top of file.
+# The following constants are re-exported for backward compatibility:
+# - normalize_unicode_homographs (imported as alias from unicode_security.normalize_text)
+# - detect_homograph_bypass (imported from unicode_security)
+# - ALL_LOOKALIKES, CONFUSABLES, ZERO_WIDTH_CHARS (imported from unicode_security)
 # =============================================================================
 
-# Comprehensive homograph character mappings
-HOMOGRAPH_MAP = {
-    # Cyrillic to Latin mappings
-    '\u0430': 'a',  # Cyrillic a
-    '\u0435': 'e',  # Cyrillic e
-    '\u043e': 'o',  # Cyrillic o
-    '\u0440': 'p',  # Cyrillic p (looks like p)
-    '\u0441': 'c',  # Cyrillic c
-    '\u0443': 'y',  # Cyrillic y
-    '\u0445': 'x',  # Cyrillic x
-    '\u0456': 'i',  # Cyrillic i
-    '\u0410': 'A',  # Cyrillic A
-    '\u0412': 'B',  # Cyrillic B
-    '\u0415': 'E',  # Cyrillic E
-    '\u041a': 'K',  # Cyrillic K
-    '\u041c': 'M',  # Cyrillic M
-    '\u041d': 'H',  # Cyrillic H
-    '\u041e': 'O',  # Cyrillic O
-    '\u0420': 'P',  # Cyrillic P
-    '\u0421': 'C',  # Cyrillic C
-    '\u0422': 'T',  # Cyrillic T
-    '\u0425': 'X',  # Cyrillic X
-
-    # Greek to Latin mappings
-    '\u03b1': 'a',  # Greek alpha
-    '\u03b5': 'e',  # Greek epsilon
-    '\u03b9': 'i',  # Greek iota
-    '\u03bf': 'o',  # Greek omicron
-    '\u03c1': 'p',  # Greek rho
-    '\u03c5': 'u',  # Greek upsilon
-    '\u03c7': 'x',  # Greek chi
-    '\u0391': 'A',  # Greek Alpha
-    '\u0392': 'B',  # Greek Beta
-    '\u0395': 'E',  # Greek Epsilon
-    '\u0397': 'H',  # Greek Eta
-    '\u0399': 'I',  # Greek Iota
-    '\u039a': 'K',  # Greek Kappa
-    '\u039c': 'M',  # Greek Mu
-    '\u039d': 'N',  # Greek Nu
-    '\u039f': 'O',  # Greek Omicron
-    '\u03a1': 'P',  # Greek Rho
-    '\u03a4': 'T',  # Greek Tau
-    '\u03a5': 'Y',  # Greek Upsilon
-    '\u03a7': 'X',  # Greek Chi
-    '\u0396': 'Z',  # Greek Zeta
-
-    # Other confusables
-    '\u2010': '-',  # Hyphen
-    '\u2011': '-',  # Non-breaking hyphen
-    '\u2212': '-',  # Minus sign
-    '\uff0d': '-',  # Fullwidth hyphen-minus
-    '\u2018': "'",  # Left single quote
-    '\u2019': "'",  # Right single quote
-    '\u201c': '"',  # Left double quote
-    '\u201d': '"',  # Right double quote
-    '\uff20': '@',  # Fullwidth @
-    '\uff0f': '/',  # Fullwidth /
-    '\uff3c': '\\',  # Fullwidth backslash
-    '\u2024': '.',  # One dot leader
-    '\u2027': '-',  # Hyphenation point
-    '\u30fb': '.',  # Katakana middle dot
-
-    # Zero-width characters (remove them)
-    '\u200b': '',  # Zero width space
-    '\u200c': '',  # Zero width non-joiner
-    '\u200d': '',  # Zero width joiner
-    '\ufeff': '',  # BOM / zero width no-break space
-}
-
-
-def normalize_unicode_homographs(text: str) -> str:
-    """
-    Normalize Unicode homograph characters to their ASCII equivalents.
-    This prevents bypass attempts using visually similar characters from different scripts.
-
-    Args:
-        text: Text to normalize.
-
-    Returns:
-        Normalized text with homographs replaced by ASCII equivalents.
-    """
-    # Apply direct homograph replacements
-    normalized = text
-    for homograph, replacement in HOMOGRAPH_MAP.items():
-        normalized = normalized.replace(homograph, replacement)
-
-    # Also normalize using Unicode NFKD (compatibility decomposition)
-    # This handles many other Unicode tricks
-    normalized = unicodedata.normalize('NFKD', normalized)
-
-    return normalized
-
-
-def detect_homograph_bypass(text: str) -> bool:
-    """
-    Detect if text contains Unicode homograph characters that could be used for bypass.
-
-    Args:
-        text: Text to check.
-
-    Returns:
-        True if homograph bypass attempt detected.
-    """
-    normalized = normalize_unicode_homographs(text)
-
-    if normalized != text:
-        # Check if the normalized version reveals dangerous commands
-        dangerous_commands = ['curl', 'wget', 'nc ', 'netcat', 'bash', 'sh ',
-                             '/bin/sh', 'exec', 'eval', 'python', 'perl', 'ruby']
-        for cmd in dangerous_commands:
-            if cmd in normalized.lower() and cmd not in text.lower():
-                return True
-    return False
+# Legacy alias for backwards compatibility
+HOMOGRAPH_MAP = {**ALL_LOOKALIKES, **CONFUSABLES, **ZERO_WIDTH_CHARS}
 
 
 # =============================================================================

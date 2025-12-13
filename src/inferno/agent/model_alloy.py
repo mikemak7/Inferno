@@ -46,7 +46,7 @@ class AlloyConfig:
     primary_model: str = "claude-opus-4-5-20251101"
 
     # Secondary model (different perspective)
-    secondary_model: str = "claude-sonnet-4-5-20250929"
+    secondary_model: str = "claude-opus-4-5-20251101"
 
     # Strategy for switching
     strategy: AlloyStrategy = AlloyStrategy.ADAPTIVE
@@ -338,7 +338,7 @@ class ModelAlloy:
 
 def create_model_alloy(
     primary_model: str = "claude-opus-4-5-20251101",
-    secondary_model: str = "claude-sonnet-4-5-20250929",
+    secondary_model: str = "claude-opus-4-5-20251101",
     strategy: str = "adaptive",
 ) -> ModelAlloy:
     """

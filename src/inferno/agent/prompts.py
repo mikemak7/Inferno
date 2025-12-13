@@ -236,6 +236,9 @@ class SystemPromptBuilder:
         if self._objective and self._objective.success_criteria:
             sections.append(self._build_criteria_section())
 
+        # Swarm worker instructions - encourage parallel work
+        sections.append(self._build_swarm_section())
+
         return "\n\n".join(sections)
 
     def _build_operation_section(self) -> str:
@@ -374,6 +377,45 @@ Use Tool Search to discover additional specialized tools as needed."""
         return f"""## Success Criteria
 
 {criteria}"""
+
+    def _build_swarm_section(self) -> str:
+        """Build swarm worker instructions section."""
+        return """## SWARM WORKERS - Parallelize Your Work!
+
+You have access to the `swarm` tool to spawn specialized workers. **USE IT FREQUENTLY** for:
+
+**When to spawn workers:**
+- After initial recon → spawn `scanner` for parallel vulnerability scanning
+- When you find potential vulnerabilities → spawn `analyzer` for deep investigation
+- When stuck or blocked → spawn `exploiter` with specific bypass instructions
+- To confirm findings → spawn `validator` for independent verification
+- When WAF blocks you → spawn `waf_bypass` specialist
+
+**Available worker types:**
+| Type | Use For |
+|------|---------|
+| `reconnaissance` | Fast enumeration, tech stack discovery |
+| `scanner` | Automated vulnerability scanning |
+| `exploiter` | Deep exploitation of specific vulns |
+| `analyzer` | Detailed analysis (SSTI, SQLi, XSS, etc.) |
+| `validator` | Independent finding confirmation |
+| `waf_bypass` | WAF/filter evasion techniques |
+| `business_logic` | Logic flaw hunting, race conditions |
+| `token_forgery` | JWT/session token attacks |
+
+**Example usage:**
+```
+# After finding potential SSTI
+swarm(agent_type="analyzer", task="Analyze SSTI in /render endpoint. Test Jinja2, Twig, Freemarker. If blocked, try encoding.")
+
+# When SQLi found but need exploitation
+swarm(agent_type="exploiter", task="Exploit SQL injection in /api/search?q=. Extract database contents.")
+
+# For parallel scanning
+swarm(agent_type="scanner", task="Scan /api/* endpoints for authentication bypass and IDOR.")
+```
+
+**IMPORTANT:** Don't try to do everything sequentially! Spawn workers for parallel efficiency."""
 
     def _build_environment_section(self) -> str:
         """

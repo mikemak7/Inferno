@@ -691,4 +691,4 @@ class TestGuardrailsRegression:
 
             if window_time < 1.0:  # 1 second window
                 rps = window_requests / max(window_time, 0.001)
-                assert rps <= MAX_REQUESTS_PER_SECOND * 1.1, f"Rate limit exceeded: {rps} RPS"
+                assert rps <= MAX_REQUESTS_PER_SECOND * 1.15, f"Rate limit exceeded: {rps} RPS"

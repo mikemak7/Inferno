@@ -8,7 +8,7 @@ Autonomous Penetration Testing Agent powered by Claude with a simplified, effect
 
 | Old Approach (Broken) | New Approach (Works) |
 |-----------------------|----------------------|
-| 81 specialized tools | 4 core tools |
+| 81 specialized tools | 5 core tools |
 | "Which tool?" decision overhead | "Run this command" |
 | Complex abstractions | Direct execution |
 | Never validated | Built for real CTFs |
@@ -26,10 +26,10 @@ Autonomous Penetration Testing Agent powered by Claude with a simplified, effect
 ```
 src/inferno/
 ├── agent/                   # Main agent execution
-│   ├── executor.py          # AgentExecutor
-│   ├── sdk_executor.py      # SDKExecutor (primary)
-│   ├── loop.py              # AgentLoop
-│   └── prompts.py           # SystemPromptBuilder
+│   ├── sdk_executor.py      # SDKAgentExecutor (primary)
+│   ├── prompts.py           # SystemPromptBuilder
+│   ├── mcp_tools.py         # MCP server tools
+│   └── strategic_planner.py # Strategic planning
 ├── cli/                     # Command-line interface
 │   ├── main.py              # Typer app
 │   └── shell.py             # Interactive shell
@@ -37,18 +37,21 @@ src/inferno/
 │   └── settings.py          # InfernoSettings
 ├── core/                    # Core infrastructure
 │   ├── scope.py             # CRITICAL: Scope enforcement
-│   ├── guardrails.py        # Security policies
+│   ├── guardrails.py        # Security policies (GuardrailEngine)
 │   ├── unicode_security.py  # Homograph detection
 │   ├── knowledge.py         # Knowledge graph
 │   ├── network.py           # Rate limiting
 │   ├── branch_tracker.py    # Decision tracking
-│   ├── checkpoint.py        # State persistence
-│   └── preflight.py         # Validation
-├── tools/                   # ONLY 4 CORE TOOLS
-│   ├── execute_command.py   # THE tool - runs everything
-│   ├── http.py              # HTTP requests
-│   ├── memory.py            # Persistent memory
-│   ├── think.py             # Structured reasoning
+│   ├── attack_selector.py   # Technology-to-attack mapping
+│   ├── hint_extractor.py    # Response hint extraction
+│   ├── response_analyzer.py # WAF/filter detection
+│   ├── differential_analyzer.py # Blind injection detection
+│   └── payload_mutator.py   # Bypass payload generation
+├── tools/                   # 5 CORE TOOLS
+│   ├── execute_command.py   # execute_command, generic_linux_command, execute_code
+│   ├── http.py              # HTTPTool (http_request)
+│   ├── memory.py            # MemoryTool (memory)
+│   ├── think.py             # ThinkTool (think)
 │   ├── base.py              # BaseTool class
 │   ├── decorator.py         # @function_tool
 │   └── registry.py          # ToolRegistry
@@ -57,15 +60,19 @@ src/inferno/
 │   ├── agents.py            # SubAgentConfig
 │   ├── meta_coordinator.py  # MetaCoordinator (subagent-driven)
 │   └── message_bus.py       # Inter-agent communication
+├── algorithms/              # Learning algorithms (bandits, MCTS, Q-learning)
+├── patterns/                # Execution patterns (parallel, swarm, hierarchical)
+├── quality/                 # Quality gates and validation
 ├── prompts/                 # Prompt system
 ├── handlers/                # Event handlers
 ├── observability/           # Metrics & tracing
+├── runner.py                # InfernoRunner (unified runner)
 └── reporting/               # Report generation
 ```
 
 ## The Tool System
 
-### Core Tools (Only 4!)
+### Core Tools (5 tools)
 
 1. **`execute_command`** - THE primary tool. Runs any command:
    ```python
@@ -76,11 +83,13 @@ src/inferno/
    execute_command("python exploit.py")
    ```
 
-2. **`http_request`** - HTTP requests with advanced features
+2. **`generic_linux_command`** - Execute commands in Kali Docker container (pentest tools)
 
-3. **`memory`** - Persistent memory storage (Mem0/Qdrant)
+3. **`http_request`** (HTTPTool) - HTTP requests with CDN detection, smart routing
 
-4. **`think`** - Structured reasoning for complex decisions
+4. **`memory`** (MemoryTool) - Persistent dual memory (episodic + semantic)
+
+5. **`think`** (ThinkTool) - Structured reasoning for complex decisions
 
 ### Why This Works
 
@@ -257,7 +266,7 @@ Don't add new tools. If you need new capability, either:
 | `modules/` (10 files) | Abstraction layers with no value |
 | `core/` over-engineering | cdn_detector, geo_detector, etc. |
 
-**Result**: From 214 Python files to 107. From 81 tools to 4.
+**Result**: From 214 Python files to ~130. From 81 tools to 5 core tools.
 
 ## What's Kept (And Why)
 
@@ -276,14 +285,21 @@ Don't add new tools. If you need new capability, either:
 The measure of success: Can Inferno solve real HackTheBox machines?
 
 ```python
-from inferno.agent.sdk_executor import SDKExecutor
+from inferno.agent import SDKAgentExecutor
 
-executor = SDKExecutor(settings)
+executor = SDKAgentExecutor(settings)
 result = await executor.run(
     target="10.10.10.x",
     objective="Obtain root flag",
     persona="ctf"
 )
+
+# Or use the unified InfernoRunner
+from inferno.runner import InfernoRunner, RunConfig
+
+runner = InfernoRunner()
+config = RunConfig(target="10.10.10.x", objective="Obtain root flag")
+result = await runner.run(config)
 ```
 
 If it can't get root on machines that humans solve, it's broken. Ship when it works.

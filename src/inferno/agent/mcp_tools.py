@@ -100,13 +100,13 @@ def _get_memory_tool():
 # Swarm Tool Configuration - for spawning subagents
 # -------------------------------------------------------------------------
 
-_swarm_model = "claude-sonnet-4-5-20250514"
+_swarm_model = "claude-opus-4-5-20251101"
 _swarm_target = None
 _swarm_configured = False
 
 
 def configure_swarm(
-    model: str = "claude-sonnet-4-5-20250514",
+    model: str = "claude-opus-4-5-20251101",
     target: str | None = None,
 ) -> None:
     """

@@ -27,14 +27,9 @@ from typing import Any, Callable, TYPE_CHECKING
 import structlog
 
 from inferno.swarm.message_bus import (
-    MessageBus,
     MessageType,
-    MessagePriority,
-    Message,
     get_message_bus,
     publish_finding,
-    publish_endpoint,
-    publish_chain,
 )
 
 if TYPE_CHECKING:
@@ -42,6 +37,50 @@ if TYPE_CHECKING:
     from inferno.tools.registry import ToolRegistry
 
 logger = structlog.get_logger(__name__)
+
+
+# =============================================================================
+# Safe async task helpers
+# =============================================================================
+
+def _safe_create_task(
+    coro,
+    *,
+    name: str | None = None,
+    logger_instance=None,
+) -> asyncio.Task:
+    """
+    Create an asyncio task with proper exception handling.
+
+    Fire-and-forget tasks can silently swallow exceptions if not properly handled.
+    This wrapper logs any exceptions that occur in the background task.
+
+    Args:
+        coro: The coroutine to run.
+        name: Optional task name for logging.
+        logger_instance: Logger to use (defaults to module logger).
+
+    Returns:
+        The created asyncio.Task.
+    """
+    log = logger_instance or logger
+    task = asyncio.create_task(coro, name=name)
+
+    def _handle_exception(t: asyncio.Task) -> None:
+        try:
+            exc = t.exception()
+            if exc is not None:
+                log.error(
+                    "background_task_failed",
+                    task_name=name or "unnamed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+        except asyncio.CancelledError:
+            pass  # Task was cancelled, not an error
+
+    task.add_done_callback(_handle_exception)
+    return task
 
 
 class AssessmentPhase(str, Enum):
@@ -252,7 +291,7 @@ class MetaCoordinator:
         objective: str,
         operation_id: str,
         artifacts_dir: Path | None = None,
-        model: str = "claude-sonnet-4-5-20250514",
+        model: str = "claude-opus-4-5-20251101",
         # Legacy params (ignored, kept for backwards compatibility)
         client: "AsyncAnthropic | None" = None,
         registry: "ToolRegistry | None" = None,
@@ -583,11 +622,14 @@ Use the memory tool to share findings, endpoints, and attack vectors."""
                 if url not in self._shared_context["discovered_endpoints"]:
                     self._shared_context["discovered_endpoints"].append(url)
                     # Broadcast to other workers
-                    asyncio.create_task(self._message_bus.publish(
-                        sender="coordinator",
-                        message_type=MessageType.ENDPOINT,
-                        content={"url": url, "source": task.worker_type.value},
-                    ))
+                    _safe_create_task(
+                        self._message_bus.publish(
+                            sender="coordinator",
+                            message_type=MessageType.ENDPOINT,
+                            content={"url": url, "source": task.worker_type.value},
+                        ),
+                        name=f"broadcast_endpoint_{url[:50]}",
+                    )
 
     async def _extract_findings_from_result(
         self,
@@ -674,15 +716,18 @@ Use the memory tool to share findings, endpoints, and attack vectors."""
                     )
 
                     # Broadcast finding to all workers via MessageBus
-                    asyncio.create_task(publish_finding(
-                        bus=self._message_bus,
-                        sender=f"{task.worker_type.value}_{task.task_id}",
-                        vuln_type=vuln_type,
-                        severity=finding.severity,
-                        title=finding.title,
-                        evidence=finding.evidence[:500],
-                        target=finding.target,
-                    ))
+                    _safe_create_task(
+                        publish_finding(
+                            bus=self._message_bus,
+                            sender=f"{task.worker_type.value}_{task.task_id}",
+                            vuln_type=vuln_type,
+                            severity=finding.severity,
+                            title=finding.title,
+                            evidence=finding.evidence[:500],
+                            target=finding.target,
+                        ),
+                        name=f"broadcast_finding_{finding.finding_id}",
+                    )
 
                     if self._on_finding:
                         self._on_finding(finding)

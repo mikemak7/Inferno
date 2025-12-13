@@ -39,6 +39,7 @@ class SubAgentType(str, Enum):
     API_FLOW = "api_flow"
     BUSINESS_LOGIC = "business_logic"
     REPORTER = "reporter"
+    ANALYZER = "analyzer"  # Deep analysis of specific vulnerabilities
 
     # IoT/Hardware Security
     IOT_SCANNER = "iot_scanner"
@@ -530,6 +531,61 @@ Complete security report with working PoC scripts for each finding.""",
         max_turns=15,
     ),
 
+    SubAgentType.ANALYZER: SubAgentConfig(
+        agent_type=SubAgentType.ANALYZER,
+        name="Vulnerability Analyzer",
+        system_prompt="""You are a deep vulnerability analyzer. Investigate specific attack vectors in depth.
+
+## Your Job
+- Deeply analyze specific vulnerability types
+- Test edge cases and variations
+- Find bypass techniques when blocked
+- Chain findings together
+- Provide detailed exploitation paths
+
+## Analysis Focus Areas
+1. **SSTI Analysis**: Test all template engines (Jinja2, Twig, Freemarker, etc.)
+   - Test in all input fields, not just obvious ones
+   - Check dynamically generated content (JS, CSS, etc.)
+   - Try different payloads: {{7*7}}, ${7*7}, <%=7*7%>, #{7*7}
+
+2. **Injection Analysis**: Deep dive into SQLi, XSS, Command injection
+   - Boolean-based blind testing
+   - Time-based blind testing
+   - Error-based exploitation
+   - Out-of-band techniques
+
+3. **Authentication Analysis**: Session handling, token analysis
+   - JWT vulnerabilities (none algorithm, weak secret)
+   - Session fixation, prediction
+   - OAuth misconfigurations
+
+4. **Logic Analysis**: Business logic flaws
+   - Race conditions
+   - State manipulation
+   - Price/quantity tampering
+
+## Tools (use execute_command)
+```bash
+# Manual testing
+curl -s "URL" | grep -i "pattern"
+# SQLMap for injection
+sqlmap -u "URL" --batch --technique=BEUS
+# Template testing
+for p in '{{7*7}}' '\\${7*7}' '<%=7*7%>'; do curl -s "URL?param=$p"; done
+```
+
+## IMPORTANT
+- Don't give up after first failure - try multiple bypass techniques
+- Look for unusual injection points (headers, cookies, file names)
+- Always validate findings with proof
+
+## Output
+Detailed analysis with confirmed vulnerabilities and PoC code.""",
+        tools=CORE_TOOLS.copy(),
+        max_turns=25,
+    ),
+
     # =========================================================================
     # IoT/HARDWARE SECURITY AGENTS
     # =========================================================================
@@ -619,8 +675,8 @@ ubi_reader ubifs.img                        # UBIFS
 
 # Secret hunting
 grep -rn "password" _firmware.bin.extracted/
-grep -rn "api_key\|apikey\|secret" extracted/
-find . -name "*.conf" -exec cat {} \;
+grep -rn "api_key\\|apikey\\|secret" extracted/
+find . -name "*.conf" -exec cat {} \\;
 find . -name "shadow" -o -name "passwd"
 find . -name "*.pem" -o -name "*.key"
 
@@ -675,15 +731,15 @@ strings dump.bin > strings.txt              # Extract strings
 strings -n 10 dump.bin | sort -u            # Longer strings
 
 # Secret hunting
-strings dump.bin | grep -iE "password|passwd|pwd"
-strings dump.bin | grep -iE "api.?key|token|secret"
+strings dump.bin | grep -iE "password\\|passwd\\|pwd"
+strings dump.bin | grep -iE "api.?key\\|token\\|secret"
 strings dump.bin | grep -iE "BEGIN.*PRIVATE"
 strings dump.bin | grep -E "[A-Za-z0-9+/]{40,}={0,2}"  # Base64
 
 # Pattern matching
-grep -aoE "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" dump.bin  # Emails
-grep -aoE "([0-9]{1,3}\.){3}[0-9]{1,3}" dump.bin  # IPs
-grep -aoE "https?://[^\s\"'<>]+" dump.bin   # URLs
+grep -aoE "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}" dump.bin  # Emails
+grep -aoE "([0-9]{1,3}\\.){3}[0-9]{1,3}" dump.bin  # IPs
+grep -aoE "https?://[^\\s\"'<>]+" dump.bin   # URLs
 
 # Volatility3 (if available)
 vol3 -f dump.bin windows.info               # System info

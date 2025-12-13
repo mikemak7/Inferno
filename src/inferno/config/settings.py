@@ -26,7 +26,7 @@ class ModelTier(str, Enum):
 
     # Claude 4.5 models (latest)
     OPUS_4_5 = "claude-opus-4-5-20251101"
-    SONNET_4_5 = "claude-sonnet-4-5-20250929"
+    SONNET_4_5 = "claude-sonnet-4-20250514"
     HAIKU_4_5 = "claude-haiku-4-5-20251001"
 
     # Claude 4 models

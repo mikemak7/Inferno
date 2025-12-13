@@ -106,6 +106,26 @@ CONFUSABLES = {
     '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5',  # Circled numbers
     'ⓐ': 'a', 'ⓑ': 'b', 'ⓒ': 'c', 'ⓓ': 'd', 'ⓔ': 'e',  # Circled letters
     '＠': '@', '／': '/', '＼': '\\',  # Fullwidth symbols
+    # Punctuation variants
+    '\u2010': '-',  # Hyphen
+    '\u2011': '-',  # Non-breaking hyphen
+    '\u2212': '-',  # Minus sign
+    '\uff0d': '-',  # Fullwidth hyphen-minus
+    '\u2018': "'",  # Left single quote
+    '\u2019': "'",  # Right single quote
+    '\u201c': '"',  # Left double quote
+    '\u201d': '"',  # Right double quote
+    '\u2024': '.',  # One dot leader
+    '\u2027': '-',  # Hyphenation point
+    '\u30fb': '.',  # Katakana middle dot
+}
+
+# Zero-width characters (remove them entirely)
+ZERO_WIDTH_CHARS = {
+    '\u200b': '',  # Zero width space
+    '\u200c': '',  # Zero width non-joiner
+    '\u200d': '',  # Zero width joiner
+    '\ufeff': '',  # BOM / zero width no-break space
 }
 
 # Dangerous scripts for domain spoofing
@@ -239,6 +259,10 @@ def normalize_text(text: str, aggressive: bool = False) -> str:
     Returns:
         Normalized text.
     """
+    # First, remove zero-width characters
+    for zw_char in ZERO_WIDTH_CHARS:
+        text = text.replace(zw_char, '')
+
     result = list(text)
 
     # Replace known lookalikes
@@ -255,6 +279,28 @@ def normalize_text(text: str, aggressive: bool = False) -> str:
                 result[i] = ascii_char[0]
 
     return ''.join(result)
+
+
+def detect_homograph_bypass(text: str) -> bool:
+    """
+    Detect if text contains Unicode homograph characters that could be used for bypass.
+
+    Args:
+        text: Text to check.
+
+    Returns:
+        True if homograph bypass attempt detected.
+    """
+    normalized = normalize_text(text)
+
+    if normalized != text:
+        # Check if the normalized version reveals dangerous commands
+        dangerous_commands = ['curl', 'wget', 'nc ', 'netcat', 'bash', 'sh ',
+                             '/bin/sh', 'exec', 'eval', 'python', 'perl', 'ruby']
+        for cmd in dangerous_commands:
+            if cmd in normalized.lower() and cmd not in text.lower():
+                return True
+    return False
 
 
 def check_url_security(url: str) -> SecurityCheckResult:
@@ -393,13 +439,23 @@ def sanitize_input(text: str, context: str = "general") -> str:
 
 # Export key functions
 __all__ = [
+    # Data classes
     'RiskLevel',
     'HomographResult',
     'SecurityCheckResult',
+    # Detection functions
     'detect_homographs',
+    'detect_homograph_bypass',
     'normalize_text',
     'check_url_security',
     'validate_url',
     'sanitize_input',
     'get_script',
+    # Constants (for reuse)
+    'CYRILLIC_LOOKALIKES',
+    'GREEK_LOOKALIKES',
+    'ALL_LOOKALIKES',
+    'CONFUSABLES',
+    'ZERO_WIDTH_CHARS',
+    'DANGEROUS_SCRIPTS',
 ]

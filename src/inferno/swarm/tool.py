@@ -160,7 +160,7 @@ class SwarmTool(CoreTool):
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-5-20250514",
+        model: str = "claude-opus-4-5-20251101",
         operation_id: str | None = None,
         target: str | None = None,
     ) -> None:

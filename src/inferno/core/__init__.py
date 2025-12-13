@@ -90,6 +90,26 @@ from inferno.core.attack_selector import (
     AttackVector,
     get_attack_selector,
 )
+# Guardrails (security policies)
+from inferno.core.guardrails import (
+    GuardrailType,
+    GuardrailAction,
+    GuardrailPolicy,
+    GuardrailResult,
+    GuardrailViolation,
+    GuardrailEngine,
+    GuardrailViolationError,
+    get_guardrail_engine,
+    guarded_tool,
+    input_guardrail,
+    output_guardrail,
+    normalize_unicode_homographs,
+    detect_homograph_bypass,
+    check_encoded_payload,
+    sanitize_external_content,
+    detect_injection_patterns,
+    get_security_guardrails,
+)
 
 __all__ = [
     # Scope Management
@@ -148,4 +168,22 @@ __all__ = [
     "AttackSelector",
     "AttackVector",
     "get_attack_selector",
+    # Guardrails
+    "GuardrailType",
+    "GuardrailAction",
+    "GuardrailPolicy",
+    "GuardrailResult",
+    "GuardrailViolation",
+    "GuardrailEngine",
+    "GuardrailViolationError",
+    "get_guardrail_engine",
+    "guarded_tool",
+    "input_guardrail",
+    "output_guardrail",
+    "normalize_unicode_homographs",
+    "detect_homograph_bypass",
+    "check_encoded_payload",
+    "sanitize_external_content",
+    "detect_injection_patterns",
+    "get_security_guardrails",
 ]

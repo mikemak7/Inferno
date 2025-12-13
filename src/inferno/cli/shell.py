@@ -913,7 +913,7 @@ class InfernoShell:
 
                 # Configure swarm tool so Meta Agent can spawn workers
                 configure_swarm(
-                    model="claude-sonnet-4-5-20250514",  # Workers use Sonnet
+                    model="claude-opus-4-5-20251101",  # Workers use Opus
                     target=target,
                 )
 
@@ -1055,6 +1055,15 @@ class InfernoShell:
                 console.print("  [green]✓[/green] so_what_gate.md")
                 console.print(f"  [green]✓[/green] contexts/{self.current_mode}.md")
                 console.print("  [green]✓[/green] [bold yellow]techniques/advanced_attacks.md[/bold yellow] [dim](race conditions, SSTI, smuggling)[/dim]")
+
+            # Show active intelligence features
+            console.print("\n[bold cyan]🧠 Intelligence Features Active:[/bold cyan]")
+            console.print("  [green]✓[/green] HintExtractor [dim](technology fingerprints, CTF hints)[/dim]")
+            console.print("  [green]✓[/green] ResponseAnalyzer [dim](WAF detection, bypass suggestions)[/dim]")
+            console.print("  [green]✓[/green] DifferentialAnalyzer [dim](blind injection detection)[/dim]")
+            console.print("  [green]✓[/green] AttackSelector [dim](prioritized attack vectors)[/dim]")
+            console.print("  [green]✓[/green] AlgorithmLearning [dim](MAB/Q-learning for decisions)[/dim]")
+            console.print("  [green]✓[/green] MemoryIntegration [dim](cross-session knowledge transfer)[/dim]")
 
             console.print("\n[bold green]Starting Meta Agent assessment...[/bold green]\n")
 
@@ -2333,7 +2342,7 @@ class InfernoShell:
         try:
             hostname = socket.gethostname()
             ip_addr = socket.gethostbyname(hostname)
-        except:
+        except (socket.error, OSError):
             hostname = "unknown"
             ip_addr = "127.0.0.1"
 
@@ -2349,8 +2358,8 @@ class InfernoShell:
                 if netifaces.AF_INET in addrs:
                     tun0_ip = addrs[netifaces.AF_INET][0].get('addr')
                     console.print(f"  [green]VPN (tun0): {tun0_ip}[/green]")
-        except:
-            pass
+        except (ImportError, KeyError, ValueError):
+            pass  # netifaces not installed or interface not available
 
         # Security tools check
         console.print("\n[bold]Security Tools:[/bold]")

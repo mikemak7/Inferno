@@ -20,19 +20,17 @@ avoiding dependencies and providing more control over the memory system.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
 import uuid
 import warnings
 from datetime import datetime, timezone
-from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from inferno.tools.base import HybridTool, ToolCallerType, ToolExample, ToolResult
+from inferno.tools.base import HybridTool, ToolExample, ToolResult
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
@@ -430,6 +428,19 @@ class QdrantConnector:
             logger.error("collection_delete_failed", error=str(e))
             return False
 
+    def close(self) -> None:
+        """Close the Qdrant client and release resources."""
+        if self._client is not None:
+            # QdrantClient doesn't have explicit close(), but we clear our reference
+            self._client = None
+            logger.info("qdrant_client_closed")
+        if self._embedder is not None:
+            self._embedder = None
+            logger.info("embedder_released")
+        if self._embedding_cache is not None:
+            self._embedding_cache = None
+        self._collections.clear()
+
 
 # ============================================================================
 # Dual Memory System Functions
@@ -456,6 +467,20 @@ def _get_qdrant_connector() -> QdrantConnector:
         )
 
     return _qdrant_connector
+
+
+def cleanup_qdrant_connector() -> None:
+    """
+    Close and release the global Qdrant connector.
+
+    Call this function during application shutdown to properly release resources.
+    """
+    global _qdrant_connector
+
+    if _qdrant_connector is not None:
+        _qdrant_connector.close()
+        _qdrant_connector = None
+        logger.info("global_qdrant_connector_closed")
 
 
 def _sanitize_target_id(target: str) -> str:
@@ -836,117 +861,8 @@ def _generalize_for_semantic(content: str, target: str) -> str:
 
 
 # ============================================================================
-# Legacy Classes (kept for backwards compatibility)
+# Fallback Storage (used when Qdrant is unavailable)
 # ============================================================================
-
-class DirectQdrantStorage:
-    """
-    Direct Qdrant storage that bypasses Mem0 entirely.
-
-    Uses sentence_transformers for embeddings and Qdrant for vector storage.
-    This avoids Mem0's buggy OpenAI dependencies.
-
-    DEPRECATED: Use QdrantConnector instead.
-    """
-
-    def __init__(
-        self,
-        qdrant_host: str = "localhost",
-        qdrant_port: int = 6333,
-        collection_name: str = "inferno_memories",
-        cache_size: int = 1000,
-    ) -> None:
-        self._connector = QdrantConnector(
-            host=qdrant_host,
-            port=qdrant_port,
-            cache_size=cache_size,
-        )
-        self._collection_name = collection_name
-
-    def _get_client(self) -> QdrantClient:
-        """Get Qdrant client."""
-        return self._connector._get_client()
-
-    def add(
-        self,
-        content: str,
-        user_id: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Add a memory with vector embedding."""
-        enriched_metadata = {
-            "user_id": user_id,
-            **(metadata or {}),
-        }
-
-        memory_id = str(uuid.uuid4())
-        success = self._connector.add_points(
-            collection_name=self._collection_name,
-            texts=[content],
-            metadata=[enriched_metadata],
-            id_point=memory_id,
-        )
-
-        return {"id": memory_id} if success else {"id": None}
-
-    def search(
-        self,
-        query: str,
-        user_id: str,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Semantic search using vector similarity."""
-        results = self._connector.search(
-            collection_name=self._collection_name,
-            query_text=query,
-            limit=limit,
-        )
-
-        # Filter by user_id if present
-        filtered = []
-        for r in results:
-            meta = r.get("metadata", {})
-            if not user_id or meta.get("user_id") == user_id:
-                filtered.append({
-                    "id": r["id"],
-                    "memory": r["text"],
-                    "user_id": meta.get("user_id", ""),
-                    "metadata": meta,
-                    "score": r["score"],
-                })
-
-        return filtered
-
-    def get(self, memory_id: str) -> dict[str, Any] | None:
-        """Get a memory by ID."""
-        # Note: Qdrant doesn't have direct get by ID in simple API
-        # Would need to use scroll with filter
-        return None
-
-    def get_all(self, user_id: str) -> list[dict[str, Any]]:
-        """Get all memories for a user."""
-        results = self._connector.get_all(
-            collection_name=self._collection_name,
-            limit=100,
-        )
-
-        filtered = []
-        for r in results:
-            meta = r.get("metadata", {})
-            if not user_id or meta.get("user_id") == user_id:
-                filtered.append({
-                    "id": r["id"],
-                    "memory": r["text"],
-                    "user_id": meta.get("user_id", ""),
-                    "metadata": meta,
-                })
-
-        return filtered
-
-    def delete(self, memory_id: str) -> None:
-        """Delete a memory by ID."""
-        self._connector.delete_point(self._collection_name, memory_id)
-
 
 class InMemoryStorage:
     """
@@ -1429,7 +1345,7 @@ class MemoryTool(HybridTool):
                 error="Failed to store memory",
             )
 
-        output = f"Memory stored successfully\n"
+        output = "Memory stored successfully\n"
         output += f"Type: {memory_type}\n"
         output += f"Scope: {memory_scope}\n"
         output += f"Locations: {', '.join(stored_locations)}\n"

@@ -61,6 +61,26 @@ from inferno.observability.session_trace import (
 from inferno.agent.prompts import SystemPromptBuilder
 from inferno.prompts import AgentPersona
 
+# Algorithm learning integration (wiring dead code into execution)
+try:
+    from inferno.algorithms.integration import (
+        LoopIntegration,
+        get_loop_integration,
+        learned_trigger_select,
+        record_subagent_outcome,
+    )
+    ALGORITHM_LEARNING_AVAILABLE = True
+except ImportError:
+    ALGORITHM_LEARNING_AVAILABLE = False
+
+# Attack intelligence for smarter exploitation
+try:
+    from inferno.core.attack_selector import get_attack_selector, AttackSelector
+    from inferno.core.hint_extractor import get_hint_extractor, HintExtractor
+    ATTACK_INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    ATTACK_INTELLIGENCE_AVAILABLE = False
+
 # Guardrails (kept - security critical)
 try:
     from inferno.core.guardrails import (
@@ -340,6 +360,31 @@ class SDKAgentExecutor:
         # Session trace for user visibility
         self._session_trace: SessionTrace | None = None
 
+        # Algorithm learning integration - makes Inferno smarter over time
+        self._loop_integration: LoopIntegration | None = None
+        if ALGORITHM_LEARNING_AVAILABLE:
+            try:
+                self._loop_integration = get_loop_integration()
+                logger.info("algorithm_learning_initialized")
+            except Exception as e:
+                logger.warning("algorithm_learning_init_failed", error=str(e))
+
+        # Attack intelligence for prioritized exploitation
+        self._attack_selector: AttackSelector | None = None
+        self._hint_extractor: HintExtractor | None = None
+        if ATTACK_INTELLIGENCE_AVAILABLE:
+            try:
+                self._attack_selector = get_attack_selector()
+                self._hint_extractor = get_hint_extractor()
+                logger.info("attack_intelligence_initialized")
+            except Exception as e:
+                logger.warning("attack_intelligence_init_failed", error=str(e))
+
+        # Detected technologies and hints (populated during assessment)
+        self._detected_technologies: set[str] = set()
+        self._detected_hints: list = []
+        self._waf_detected: bool = False
+
     def on_message(self, callback: Callable[[str], None]) -> SDKAgentExecutor:
         """Set callback for assistant messages."""
         self._on_message = callback
@@ -584,6 +629,34 @@ Ask "What If?":
 4. Chain vulnerabilities for maximum impact
 5. Check /etc/passwd, environment variables, config files
 
+## SWARM WORKERS - Use Them Aggressively!
+You have access to the `swarm` tool to spawn specialized workers. USE IT OFTEN:
+
+**When to spawn workers:**
+- After initial recon: spawn `scanner` for vulnerability scanning
+- When you find a potential vuln: spawn `analyzer` for deep analysis
+- When stuck: spawn `exploiter` with specific attack focus
+- For validation: spawn `validator` to confirm findings independently
+- For WAF bypass: spawn `waf_bypass` specialist
+
+**Worker types available:**
+- `reconnaissance` - Fast enumeration
+- `scanner` - Vulnerability scanning
+- `exploiter` - Deep exploitation
+- `analyzer` - Analyze specific attack vectors (SSTI, SQLi, etc.)
+- `validator` - Independent finding validation
+- `waf_bypass` - WAF evasion specialist
+- `business_logic` - Logic flaw hunting
+
+**Example swarm calls:**
+```
+swarm(agent_type="analyzer", task="Deep analyze SSTI in /template endpoint. Test Jinja2, Twig, Freemarker payloads.")
+swarm(agent_type="exploiter", task="Exploit SQLi in /api/users?id=. Try boolean and time-based blind.")
+swarm(agent_type="waf_bypass", task="Bypass CloudFlare WAF blocking SQLi on /search")
+```
+
+**IMPORTANT:** Don't do everything yourself! Spawn workers for parallel work.
+
 ## Tools Available
 ```bash
 nmap -sV -sC {config.target}
@@ -652,6 +725,84 @@ START NOW - enumerate, bypass protections, and exploit!
         advanced_section = self._build_advanced_features_section(config)
 
         return base_prompt + "\n\n" + advanced_section
+
+    def _build_attack_intelligence(self, target: str, mode: str) -> str:
+        """
+        Build attack intelligence section for system prompt.
+
+        Uses AttackSelector to generate prioritized attack recommendations
+        based on any detected technologies, hints, and historical success rates.
+
+        This makes Inferno smarter by injecting attack priorities learned from
+        previous assessments and technology fingerprints.
+
+        Args:
+            target: The target URL/IP
+            mode: Assessment mode (web, api, ctf)
+
+        Returns:
+            Formatted attack intelligence section, or empty string if unavailable
+        """
+        if not self._attack_selector or not ATTACK_INTELLIGENCE_AVAILABLE:
+            return ""
+
+        try:
+            # Get attack plan based on current knowledge
+            # Initially we have no technologies detected, but we can still
+            # get default prioritization and learning from history
+            attack_plan = self._attack_selector.select_attacks(
+                technologies=list(self._detected_technologies),
+                hints=self._detected_hints,
+                waf_detected=self._waf_detected,
+                context=mode,
+            )
+
+            if not attack_plan.vectors:
+                return ""
+
+            # Build the intelligence section
+            lines = [
+                "## ATTACK INTELLIGENCE (Algorithm-Learned Priorities)",
+                "",
+                f"**Rationale**: {attack_plan.rationale}",
+                f"**Estimated Coverage**: {attack_plan.estimated_coverage:.0%} of common vulnerabilities",
+                "",
+                "### Prioritized Attack Vectors (try in this order):",
+            ]
+
+            for i, vector in enumerate(attack_plan.vectors[:10], 1):
+                priority_pct = int(vector.priority * 100)
+                lines.append(f"{i}. **{vector.name}** (priority: {priority_pct}%)")
+                lines.append(f"   - {vector.description}")
+                if vector.techniques:
+                    lines.append(f"   - Techniques: {', '.join(vector.techniques[:5])}")
+                if vector.tools:
+                    lines.append(f"   - Tools: {', '.join(vector.tools)}")
+
+            # Add algorithm learning stats if available
+            if self._loop_integration:
+                try:
+                    stats = self._loop_integration.get_statistics()
+                    if stats:
+                        lines.append("")
+                        lines.append("### Learning Statistics:")
+                        total_triggers = stats.get("total_trigger_selections", 0)
+                        if total_triggers > 0:
+                            lines.append(f"- Total learned selections: {total_triggers}")
+                            best_trigger = stats.get("best_trigger")
+                            if best_trigger:
+                                lines.append(f"- Most successful trigger: {best_trigger}")
+                except Exception:
+                    pass  # Statistics are optional enhancement
+
+            lines.append("")
+            lines.append("**Note**: These priorities are learned from historical success. Update priorities as you discover technologies.")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.warning("attack_intelligence_build_failed", error=str(e))
+            return ""
 
     async def _auto_search_memory_for_target(self, target: str) -> str:
         """
@@ -885,7 +1036,7 @@ The system automatically monitors progress and can suggest when to try different
 
             # Create swarm tool - uses Claude SDK internally (supports OAuth)
             swarm_tool = SwarmTool(
-                model="claude-sonnet-4-5-20250514",  # Use Sonnet for faster recon
+                model="claude-opus-4-5-20251101",  # Use Opus for better analysis
                 operation_id=operation_id,
                 target=config.target,
             )
@@ -1221,6 +1372,24 @@ The system automatically monitors progress and can suggest when to try different
         self._pending_validations = []
         self._validated_findings = []
 
+        # Reset attack intelligence state
+        self._detected_technologies = set()
+        self._detected_hints = []
+        self._waf_detected = False
+
+        # Initialize algorithm learning context for this assessment
+        if self._loop_integration:
+            try:
+                self._loop_integration.set_context(
+                    target=config.target,
+                    tech_stack=[],  # Will be populated as we discover technologies
+                    endpoints=[],  # Will be populated during recon
+                    phase="reconnaissance",
+                )
+                logger.info("algorithm_learning_context_set", target=config.target)
+            except Exception as e:
+                logger.warning("algorithm_learning_context_failed", error=str(e))
+
         # Configure Mem0/Qdrant memory backend EARLY (needed for auto-search)
         # This ensures auto-memory search uses the same Qdrant instance as the rest of the system
         set_operation_id(operation_id)
@@ -1351,6 +1520,12 @@ The system automatically monitors progress and can suggest when to try different
             system_prompt += "\n\n" + strategic_context
             logger.info("strategic_context_injected", length=len(strategic_context))
 
+        # Inject attack intelligence recommendations from memory and historical success
+        attack_intelligence = self._build_attack_intelligence(config.target, config.mode)
+        if attack_intelligence:
+            system_prompt += "\n\n" + attack_intelligence
+            logger.info("attack_intelligence_injected", length=len(attack_intelligence))
+
         # Run parallel initial reconnaissance in CTF mode (if not already done)
         initial_recon_results: dict[str, str] = {}
         if self._ctf_mode and config.enable_parallel_initial_recon and not strategic_context:
@@ -1391,7 +1566,7 @@ IMPORTANT: Start by searching memory for any previous findings on this target us
 
             # Configure swarm for MCP tool - uses Claude SDK internally (supports OAuth)
             configure_swarm(
-                model=config.model or "claude-sonnet-4-5-20250514",
+                model=config.model or "claude-opus-4-5-20251101",
                 target=config.target,
             )
             logger.info("swarm_tool_configured_for_mcp", target=config.target)
@@ -1599,6 +1774,25 @@ IMPORTANT: Start by searching memory for any previous findings on this target us
                                     self._turns_without_findings = 0
                                     self._turns_without_progress = 0
 
+                                    # Record successful attack for algorithm learning
+                                    if self._loop_integration and ALGORITHM_LEARNING_AVAILABLE:
+                                        try:
+                                            self._loop_integration.record_attack_outcome(
+                                                attack_type=vuln_type,
+                                                target=endpoint,
+                                                success=True,
+                                                severity=severity,
+                                            )
+                                        except Exception:
+                                            pass  # Learning is optional
+
+                                    # Record for AttackSelector historical learning
+                                    if self._attack_selector:
+                                        try:
+                                            self._attack_selector.record_result(vuln_type, success=True)
+                                        except Exception:
+                                            pass
+
                                     logger.info(
                                         "finding_via_store_evidence",
                                         vuln_type=vuln_type,
@@ -1656,6 +1850,25 @@ IMPORTANT: Start by searching memory for any previous findings on this target us
                                             "severity": severity,
                                             "title": title,
                                         }
+
+                                        # Record successful attack for algorithm learning
+                                        if vuln_type and self._loop_integration and ALGORITHM_LEARNING_AVAILABLE:
+                                            try:
+                                                self._loop_integration.record_attack_outcome(
+                                                    attack_type=vuln_type,
+                                                    target=location,
+                                                    success=True,
+                                                    severity=severity,
+                                                )
+                                            except Exception:
+                                                pass  # Learning is optional
+
+                                        # Record for AttackSelector historical learning
+                                        if vuln_type and self._attack_selector:
+                                            try:
+                                                self._attack_selector.record_result(vuln_type, success=True)
+                                            except Exception:
+                                                pass
 
                                         # Score finding using AI-powered vulnerability scorer
                                         if self._vulnerability_scorer:

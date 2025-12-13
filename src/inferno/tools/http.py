@@ -12,13 +12,22 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 
 import httpx
 import structlog
 
 from inferno.tools.base import CoreTool, ToolExample, ToolResult
+
+# Intelligence extraction for smarter bug finding
+from inferno.core.hint_extractor import HintExtractor, HintPriority
+from inferno.core.response_analyzer import ResponseAnalyzer
+from inferno.core.differential_analyzer import (
+    DifferentialAnalyzer,
+    ResponseFingerprint,
+    get_differential_analyzer,
+)
 
 if TYPE_CHECKING:
     from inferno.core.network import NetworkManager
@@ -560,6 +569,187 @@ class HTTPTool(CoreTool):
                                 metadata["routing_recommendation"] = rec.reason
                     except Exception as e:
                         logger.warning("detection_failed", error=str(e))
+
+            # =================================================================
+            # INTELLIGENCE EXTRACTION - Makes Inferno smarter at finding bugs
+            # =================================================================
+            intelligence_output = []
+
+            # 1. Extract hints from response (technology fingerprints, CTF hints, etc.)
+            try:
+                hint_extractor = HintExtractor()
+                hints = hint_extractor.extract_from_response(
+                    body=response_text,
+                    headers=dict(response.headers),
+                    url=str(response.url),
+                    status_code=response.status_code,
+                )
+
+                if hints:
+                    # Sort by priority (critical first)
+                    priority_order = {
+                        HintPriority.CRITICAL: 0,
+                        HintPriority.HIGH: 1,
+                        HintPriority.MEDIUM: 2,
+                        HintPriority.LOW: 3,
+                    }
+                    hints = sorted(hints, key=lambda h: priority_order.get(h.priority, 4))
+
+                    intelligence_output.append("=== INTELLIGENCE EXTRACTED ===")
+                    for hint in hints[:10]:  # Limit to top 10 hints
+                        intelligence_output.append(
+                            f"  [{hint.priority.value.upper()}] {hint.hint_type.value}: {hint.content}"
+                        )
+                        if hint.suggested_attacks:
+                            intelligence_output.append(
+                                f"    → Try: {', '.join(hint.suggested_attacks[:5])}"
+                            )
+
+                    # Store hints in metadata for learning
+                    metadata["hints"] = [
+                        {
+                            "type": h.hint_type.value,
+                            "priority": h.priority.value,
+                            "content": h.content,
+                            "attacks": h.suggested_attacks,
+                        }
+                        for h in hints[:10]
+                    ]
+
+                    logger.info(
+                        "hints_extracted",
+                        count=len(hints),
+                        critical=sum(1 for h in hints if h.priority == HintPriority.CRITICAL),
+                        high=sum(1 for h in hints if h.priority == HintPriority.HIGH),
+                    )
+            except Exception as e:
+                logger.warning("hint_extraction_failed", error=str(e))
+
+            # 2. Analyze blocked responses (WAF detection, bypass suggestions)
+            if response.status_code in (403, 406, 429, 503, 401):
+                try:
+                    response_analyzer = ResponseAnalyzer()
+                    block_analysis = response_analyzer.analyze(
+                        body=response_text,
+                        status_code=response.status_code,
+                        headers=dict(response.headers),
+                        original_payload=body or json_body or form_data or "",
+                    )
+
+                    if block_analysis.is_blocked:
+                        intelligence_output.append("")
+                        intelligence_output.append("=== BLOCK ANALYSIS ===")
+                        intelligence_output.append(f"  Status: BLOCKED ({response.status_code})")
+
+                        if block_analysis.waf_type:
+                            intelligence_output.append(f"  WAF Detected: {block_analysis.waf_type}")
+                            metadata["waf_detected"] = block_analysis.waf_type
+
+                        if block_analysis.block_type:
+                            intelligence_output.append(f"  Block Type: {block_analysis.block_type}")
+                            metadata["block_type"] = block_analysis.block_type
+
+                        if block_analysis.blocked_pattern:
+                            intelligence_output.append(f"  Blocked Pattern: {block_analysis.blocked_pattern}")
+
+                        if block_analysis.suggested_bypasses:
+                            intelligence_output.append("  Suggested Bypasses:")
+                            for bypass in block_analysis.suggested_bypasses[:7]:
+                                intelligence_output.append(f"    • {bypass}")
+                            metadata["bypass_suggestions"] = block_analysis.suggested_bypasses[:7]
+
+                        logger.info(
+                            "block_analyzed",
+                            waf=block_analysis.waf_type,
+                            block_type=block_analysis.block_type,
+                            bypasses=len(block_analysis.suggested_bypasses) if block_analysis.suggested_bypasses else 0,
+                        )
+                except Exception as e:
+                    logger.warning("block_analysis_failed", error=str(e))
+
+            # 3. Differential Analysis for blind injection detection
+            # Compares this response against stored baseline to detect subtle changes
+            try:
+                diff_analyzer = get_differential_analyzer()
+
+                # Create fingerprint for this response
+                response_time = elapsed_time if elapsed_time > 0 else 0.1
+                current_fingerprint = ResponseFingerprint.from_response(
+                    url=str(response.url),
+                    status_code=response.status_code,
+                    body=response_text,
+                    headers=dict(response.headers),
+                    response_time=response_time,
+                )
+
+                # Generate baseline key from URL path + method
+                parsed = urlparse(str(response.url))
+                baseline_key = f"{method}:{parsed.path}"
+
+                # Check if we have a baseline to compare against
+                baseline = diff_analyzer.get_baseline(baseline_key)
+
+                if baseline:
+                    # Compare against baseline (payload context from body/params)
+                    payload_context = ""
+                    if body:
+                        payload_context = body[:100] if isinstance(body, str) else str(body)[:100]
+                    elif json_body:
+                        payload_context = str(json_body)[:100]
+                    elif params:
+                        payload_context = str(params)[:100]
+
+                    diff_result = diff_analyzer.compare(
+                        baseline=baseline,
+                        test=current_fingerprint,
+                        payload_context=payload_context,
+                    )
+
+                    if diff_result.is_different and diff_result.overall_significance >= 0.5:
+                        intelligence_output.append("")
+                        intelligence_output.append("=== DIFFERENTIAL ANALYSIS (Blind Injection Potential) ===")
+                        intelligence_output.append(f"  Significance: {diff_result.overall_significance:.0%}")
+                        intelligence_output.append(f"  Likely Vulnerability: {diff_result.likely_vulnerability.value}")
+
+                        for diff in diff_result.differences[:5]:
+                            intelligence_output.append(
+                                f"  [{diff.diff_type.value.upper()}] {diff.description}"
+                            )
+
+                        if diff_result.recommendation:
+                            intelligence_output.append(f"  → {diff_result.recommendation}")
+
+                        metadata["differential_analysis"] = {
+                            "is_different": True,
+                            "significance": diff_result.overall_significance,
+                            "likely_vuln": diff_result.likely_vulnerability.value,
+                            "recommendation": diff_result.recommendation,
+                        }
+
+                        logger.info(
+                            "differential_analysis_detected",
+                            significance=diff_result.overall_significance,
+                            likely_vuln=diff_result.likely_vulnerability.value,
+                            differences=len(diff_result.differences),
+                        )
+                else:
+                    # Store this response as baseline for future comparison
+                    # Only store baselines for clean requests (no obvious payloads)
+                    has_payload = any(
+                        indicator in str(body or "") + str(json_body or "") + str(params or "")
+                        for indicator in ["'", '"', "<", ">", "{{", "}}", "SLEEP", "SELECT", "UNION"]
+                    )
+                    if not has_payload:
+                        diff_analyzer.store_baseline(baseline_key, current_fingerprint)
+                        logger.debug("baseline_stored", key=baseline_key)
+
+            except Exception as e:
+                logger.warning("differential_analysis_failed", error=str(e))
+
+            # Prepend intelligence to output
+            if intelligence_output:
+                intelligence_output.append("")  # Blank line separator
+                output_parts = intelligence_output + output_parts
 
             # Add detection warnings to output
             if detection_warnings:
