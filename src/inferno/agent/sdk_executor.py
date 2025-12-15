@@ -1314,7 +1314,7 @@ The system automatically monitors progress and can suggest when to try different
 
         # Auto-detect target type if not specified
         if config.target_type == "unknown":
-            from inferno.prompts import detect_context_type
+            from inferno.agent.prompts import detect_context_type
             config.target_type = detect_context_type(config.target, config.objective)
             logger.info("target_type_auto_detected", target_type=config.target_type)
 
