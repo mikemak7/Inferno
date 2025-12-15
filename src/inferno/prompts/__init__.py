@@ -1,76 +1,59 @@
 """
-Inferno Prompts Package.
+Inferno Dynamic Prompts Package.
 
-This module provides a modular prompt system for assembling
-context-aware system prompts for the penetration testing agent.
+SIMPLIFIED ARCHITECTURE (Dec 2025):
+- dynamic_generator.py: Task-specific prompt generation with context awareness
+- NO static templates - everything is generated dynamically based on:
+  - Task type (recon, exploit, validate, report)
+  - Detected technology stack
+  - MITRE ATT&CK technique mapping
+  - Previous findings and failed attempts
+  - Scope constraints
 
-ARCHITECTURE:
-- engine.py: Dynamic prompt assembly from markdown templates
-- templates/: Core identity and report templates
-- behaviors/: Composable behavior modules (exploitation, cognitive loop, etc.)
-- phases/: Phase-specific guidance (recon, enumeration, exploitation)
-- contexts/: Target-type specific guidance (web, API, network, CTF)
-- tools/: Tool usage protocols
-- techniques/: Detailed technique guides (exploitation, API security, etc.)
-- swarm/: Swarm agent role prompts
-- strategic/: Strategic context templates (Mako-based)
+Philosophy:
+- Less is more - smaller prompts = better focus
+- Task-specific > general methodology lectures
+- Tool hints > academic security theory
+- Runtime context > static boilerplate
 """
 
-from inferno.prompts.base import (
-    AgentPersona,
-    PromptContext,
-    PromptModule,
-    PromptPriority,
+from enum import Enum
+
+from inferno.prompts.dynamic_generator import (
+    EXPLOIT_TOOLS,
+    RECON_TOOLS,
+    VALIDATION_APPROACHES,
+    DynamicPromptGenerator,
+    TaskContext,
+    TaskType,
+    TechStack,
+    generate_prompt,
+    get_generator,
 )
 
-# Main prompt engine (primary system)
-from inferno.prompts.engine import (
-    SWARM_ROLE_FILES,
-    PromptEngine,
-    build_continuation_prompt,
-    build_coordinator_prompt,
-    build_report_prompt,
-    # Swarm agent prompts
-    build_swarm_agent_prompt,
-    build_system_prompt,
-    detect_context_type,
-    get_checkpoint_prompt,
-    get_engine,
-)
 
-# Mako template engine (advanced dynamic prompts)
-from inferno.prompts.mako_engine import (
-    MakoPromptEngine,
-    SystemPromptRenderer,
-    TemplateContext,
-    create_system_prompt_renderer,
-    get_mako_engine,
-    render_prompt,
-)
+class AgentPersona(str, Enum):
+    """Agent persona types for prompt generation."""
+
+    THOROUGH = "thorough"  # Comprehensive assessment
+    CTF = "ctf"  # Aggressive, flag-focused
+    STEALTH = "stealth"  # Quiet, avoid detection
+    BUG_BOUNTY = "bug_bounty"  # Impact-focused
+
 
 __all__ = [
-    # Engine-based system (primary)
-    "PromptEngine",
-    "get_engine",
-    "build_system_prompt",
-    "build_report_prompt",
-    "build_continuation_prompt",
-    "get_checkpoint_prompt",
-    "detect_context_type",
-    # Swarm agent prompts
-    "build_swarm_agent_prompt",
-    "build_coordinator_prompt",
-    "SWARM_ROLE_FILES",
-    # Mako template engine
-    "MakoPromptEngine",
-    "TemplateContext",
-    "SystemPromptRenderer",
-    "create_system_prompt_renderer",
-    "get_mako_engine",
-    "render_prompt",
-    # Base classes (for type hints)
+    # Core generator
+    "DynamicPromptGenerator",
+    "get_generator",
+    "generate_prompt",
+    # Context classes
+    "TaskContext",
+    "TaskType",
+    "TechStack",
+    # Persona
     "AgentPersona",
-    "PromptContext",
-    "PromptModule",
-    "PromptPriority",
+    # Tool hints (for direct access)
+    "EXPLOIT_TOOLS",
+    "RECON_TOOLS",
+    "VALIDATION_APPROACHES",
 ]
