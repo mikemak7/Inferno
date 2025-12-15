@@ -17,11 +17,9 @@ from typing import TYPE_CHECKING, Any
 
 from inferno.prompts import (
     AgentPersona,
-    DynamicPromptGenerator,
     TaskContext,
     TaskType,
     TechStack,
-    generate_prompt,
     get_generator,
 )
 
@@ -234,13 +232,8 @@ class SystemPromptBuilder:
         objective = self._objective.objective if self._objective else "General security assessment"
         scope = self._target_info.scope if self._target_info else "as provided"
 
-        # Detect context and tech stack
-        context_type = detect_context_type(target, objective)
+        # Detect tech stack
         tech_stack = detect_tech_stack(target)
-
-        # Override for CTF persona
-        if self._persona == AgentPersona.CTF:
-            context_type = "ctf"
 
         # Build custom instructions from rules
         custom_instructions = ""

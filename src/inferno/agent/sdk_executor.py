@@ -111,11 +111,7 @@ except ImportError:
 
 # Assessment Scoring - Performance Assessment Framework from paper
 try:
-    from inferno.core.assessment_scoring import (
-        AssessmentScorer,
-        generate_scoring_report,
-        format_scoring_report_text,
-    )
+    from inferno.core.assessment_scoring import AssessmentScorer
     ASSESSMENT_SCORING_AVAILABLE = True
 except ImportError:
     ASSESSMENT_SCORING_AVAILABLE = False

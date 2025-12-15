@@ -19,28 +19,27 @@ Philosophy:
 
 from enum import Enum
 
-
-class AgentPersona(str, Enum):
-    """Agent persona types for prompt generation."""
-    THOROUGH = "thorough"  # Comprehensive assessment
-    CTF = "ctf"  # Aggressive, flag-focused
-    STEALTH = "stealth"  # Quiet, avoid detection
-    BUG_BOUNTY = "bug_bounty"  # Impact-focused
-
-
-# Import from dynamic generator
 from inferno.prompts.dynamic_generator import (
+    EXPLOIT_TOOLS,
+    RECON_TOOLS,
+    VALIDATION_APPROACHES,
     DynamicPromptGenerator,
     TaskContext,
     TaskType,
     TechStack,
     generate_prompt,
     get_generator,
-    # Tool/payload hints
-    EXPLOIT_TOOLS,
-    RECON_TOOLS,
-    VALIDATION_APPROACHES,
 )
+
+
+class AgentPersona(str, Enum):
+    """Agent persona types for prompt generation."""
+
+    THOROUGH = "thorough"  # Comprehensive assessment
+    CTF = "ctf"  # Aggressive, flag-focused
+    STEALTH = "stealth"  # Quiet, avoid detection
+    BUG_BOUNTY = "bug_bounty"  # Impact-focused
+
 
 __all__ = [
     # Core generator
