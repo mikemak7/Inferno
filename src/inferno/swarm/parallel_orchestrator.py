@@ -51,7 +51,7 @@ from typing import Any
 import structlog
 
 from inferno.swarm.agents import SubAgentType
-from inferno.swarm.message_bus import MessageType, get_message_bus
+from inferno.swarm.message_bus import get_message_bus
 
 logger = structlog.get_logger(__name__)
 

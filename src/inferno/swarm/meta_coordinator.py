@@ -27,19 +27,15 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from inferno.swarm.message_bus import (
-    MessageType,
-    get_message_bus,
-    publish_finding,
-)
-
 # Performance Assessment Framework - Stanford paper Section 3.2
 # S_total = Σ(TC_i + W_i) where TC = DC + EC (exploited) or DC + EC*0.8 (verified)
 from inferno.core.assessment_scoring import (
     AssessmentScorer,
-    VulnerabilityScore,
-    ExploitationStatus,
-    score_from_finding,
+)
+from inferno.swarm.message_bus import (
+    MessageType,
+    get_message_bus,
+    publish_finding,
 )
 
 if TYPE_CHECKING:
