@@ -33,6 +33,15 @@ from inferno.swarm.message_bus import (
     publish_finding,
 )
 
+# Performance Assessment Framework - Stanford paper Section 3.2
+# S_total = Σ(TC_i + W_i) where TC = DC + EC (exploited) or DC + EC*0.8 (verified)
+from inferno.core.assessment_scoring import (
+    AssessmentScorer,
+    VulnerabilityScore,
+    ExploitationStatus,
+    score_from_finding,
+)
+
 if TYPE_CHECKING:
     from anthropic import AsyncAnthropic
 
@@ -179,6 +188,17 @@ class Finding:
     cvss_score: float | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     validated_at: datetime | None = None
+
+    # Performance Assessment Framework - Stanford paper Section 3.2
+    # Technical Complexity (TC) = DC + EC (exploited) or DC + EC*0.8 (verified, 20% penalty)
+    # Business Impact Weight (W) = Critical:8, High:5, Medium:3, Low:2, Info:1
+    # Total Score (S) = TC + W
+    detection_complexity: int = 5  # DC: 1-10 (how hard to detect)
+    exploit_complexity: int = 5    # EC: 1-10 (how hard to exploit)
+    exploitation_status: str = "suspected"  # exploited, verified, suspected
+    technical_complexity_score: float = 0.0  # TC = DC + EC (or DC + EC*0.8)
+    business_impact_weight: int = 0  # W based on severity
+    total_score: float = 0.0  # S = TC + W
 
 
 @dataclass
@@ -360,6 +380,11 @@ class MetaCoordinator:
 
         # Message bus for inter-agent communication
         self._message_bus = get_message_bus()
+
+        # Performance Assessment Scorer - Stanford paper Section 3.2
+        # Tracks S_total = Σ(TC_i + W_i) across all findings
+        self._assessment_scorer = AssessmentScorer(operation_id, target)
+        logger.info("assessment_scorer_initialized", operation_id=operation_id, target=target)
 
         # Shared context that all workers can access
         self._shared_context: dict[str, Any] = {
@@ -1354,6 +1379,37 @@ Format the report professionally with clear reproduction steps.""",
                     else:
                         finding.confidence = 80  # Default for confirmed
 
+                    # Determine exploitation status for TC scoring
+                    # "exploited" = full POC with demonstrated impact
+                    # "verified" = confirmed vulnerable but no full exploitation
+                    exploited = "exploit" in result_lower or "poc" in result_lower or finding.poc is not None
+                    finding.exploitation_status = "exploited" if exploited else "verified"
+
+                    # Score the finding using Performance Assessment Framework
+                    # TC = DC + EC (exploited) or DC + EC*0.8 (verified, 20% penalty)
+                    vuln_score = self._assessment_scorer.add_finding(
+                        vuln_type=finding.vuln_type,
+                        severity=finding.severity,
+                        exploited=exploited,
+                        confidence=finding.confidence,
+                    )
+
+                    # Update finding with TC scores
+                    finding.detection_complexity = vuln_score.technical_complexity.detection_complexity
+                    finding.exploit_complexity = vuln_score.technical_complexity.exploit_complexity
+                    finding.technical_complexity_score = vuln_score.technical_complexity.score
+                    finding.business_impact_weight = vuln_score.business_impact_weight
+                    finding.total_score = vuln_score.total_score
+
+                    logger.info(
+                        "finding_scored",
+                        finding_id=finding.finding_id,
+                        tc_score=finding.technical_complexity_score,
+                        business_weight=finding.business_impact_weight,
+                        total_score=finding.total_score,
+                        exploitation_status=finding.exploitation_status,
+                    )
+
                 elif "false.?positive" in result_lower or "not.?valid" in result_lower:
                     finding.status = FindingStatus.FALSE_POSITIVE
                     finding.confidence = 0
@@ -1402,3 +1458,33 @@ Format the report professionally with clear reproduction steps.""",
     def validated_findings(self) -> list[Finding]:
         """Get validated findings only."""
         return self._state.validated_findings
+
+    @property
+    def assessment_score(self) -> float:
+        """
+        Get total assessment score (S_total) from Stanford paper Section 3.2.
+
+        S_total = Σ(TC_i + W_i) where:
+        - TC = DC + EC (exploited) or DC + EC*0.8 (verified, 20% penalty)
+        - W = Business impact weight (Critical:8, High:5, Medium:3, Low:2, Info:1)
+        """
+        return self._assessment_scorer.current_score.total_score
+
+    @property
+    def assessment_summary(self) -> str:
+        """Get human-readable assessment score summary."""
+        return self._assessment_scorer.get_summary()
+
+    def get_assessment_report(self) -> dict:
+        """
+        Get complete assessment scoring report.
+
+        Returns dict with:
+        - total_score: S_total = Σ(TC_i + W_i)
+        - finding_count: Number of validated findings
+        - exploited_count: Findings with full exploitation
+        - verified_count: Findings verified but not exploited (20% EC penalty)
+        - exploitation_rate: Percentage of findings exploited
+        - severity_breakdown: Count by severity level
+        """
+        return self._assessment_scorer.current_score.to_dict()
