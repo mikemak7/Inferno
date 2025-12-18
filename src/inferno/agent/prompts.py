@@ -300,81 +300,46 @@ Create checkpoints at 20%, 40%, 60%, and 80% budget usage."""
 
     def _build_swarm_section(self) -> str:
         """Build swarm worker instructions section."""
-        return """## SWARM ORCHESTRATION - You Are The Coordinator!
+        return """## SWARM ORCHESTRATION - You Are The Coordinator
 
-**YOUR ROLE**: You are the COORDINATOR. Don't do manual testing yourself - spawn workers!
-
-### CRITICAL: Use Swarm Workers For EVERYTHING
-
-**ALWAYS spawn workers when you discover:**
-- Multiple endpoints → Spawn scanner for EACH endpoint in parallel
-- Multiple input fields → Spawn exploiter for EACH field in parallel
-- Multiple vulnerability types → Spawn scanner for EACH vuln type
-- Multiple subdomains → Spawn recon for EACH subdomain
+**YOUR ROLE**: Coordinate workers, don't test manually. Use `background=true`!
 
 ### Swarm Worker Types
 
 | Type | When To Spawn |
 |------|---------------|
-| `reconnaissance` | New subdomain, new endpoint discovered, tech fingerprinting |
-| `scanner` | Each endpoint, each parameter, each input field |
-| `exploiter` | Each confirmed vuln, each injection point |
-| `validator` | Each finding needs independent verification |
-| `waf_bypass` | Any blocked payload, 403 responses |
-| `api_flow` | API endpoints, GraphQL, REST testing |
-| `business_logic` | Auth flows, payment logic, state manipulation |
+| `reconnaissance` | New subdomain, new endpoint discovered |
+| `scanner` | EACH endpoint, parameter, input field |
+| `exploiter` | EACH confirmed vulnerability |
+| `validator` | EACH finding for verification |
+| `waf_bypass` | Blocked payloads, 403s |
 
-### Parallel Swarm Strategy (REQUIRED)
+### Parallel Background Workers
 
-**Phase 1 - Discovery**: Spawn 3-5 recon workers simultaneously
-```
-swarm(agent_type="reconnaissance", task="Enumerate subdomains of target.com")
-swarm(agent_type="reconnaissance", task="Directory bruteforce on target.com")
-swarm(agent_type="reconnaissance", task="Technology fingerprinting on target.com")
+```python
+# Spawn workers IN PARALLEL with background=true
+swarm(agent_type="reconnaissance", task="Enumerate subdomains", background=true)
+swarm(agent_type="scanner", task="Test /login for SQLi, XSS", background=true)
+swarm(agent_type="exploiter", task="Exploit SSTI - achieve RCE", background=true)
 ```
 
-**Phase 2 - Scanning**: For EACH discovered endpoint, spawn a scanner
-```
-# Found /login, /search, /api/users, /upload → spawn 4 workers!
-swarm(agent_type="scanner", task="Test /login for SQLi, XSS, auth bypass")
-swarm(agent_type="scanner", task="Test /search?q= for SQLi, XSS, SSTI")
-swarm(agent_type="scanner", task="Test /api/users for IDOR, auth issues")
-swarm(agent_type="scanner", task="Test /upload for unrestricted upload, path traversal")
-```
+### SCORING SYSTEM - Exploit for Full Points!
 
-**Phase 3 - Exploitation**: For EACH confirmed vuln, spawn an exploiter
-```
-swarm(agent_type="exploiter", task="Exploit SQLi in /search?q= - extract DB")
-swarm(agent_type="exploiter", task="Exploit XSS in /comments - steal cookies")
-```
+**VERIFIED findings get 20% PENALTY on exploit complexity score!**
+**EXPLOITED findings get FULL points!**
 
-**Phase 4 - Validation**: Each finding gets independent validation
-```
-swarm(agent_type="validator", task="Verify SQLi in /search with different payload")
-```
+| Status | Score Formula | Example (DC=5, EC=8) |
+|--------|---------------|---------------------|
+| Exploited | TC = DC + EC | 5 + 8 = 13.0 |
+| Verified | TC = DC + EC×0.8 | 5 + 6.4 = 11.4 (-1.6 points!) |
 
-### Coverage Checklist (Spawn Workers For Each!)
+**To maximize score**: Spawn `exploiter` workers to upgrade verified → exploited!
 
-□ **Endpoints**: Every URL path gets a scanner worker
-□ **Parameters**: Every GET/POST param gets tested
-□ **Input Fields**: Every form field, search box, comment box
-□ **Headers**: Host, X-Forwarded-For, Referer injection
-□ **Cookies**: Session tokens, auth cookies
-□ **File Uploads**: Every upload field
-□ **APIs**: Every API endpoint with CRUD operations
-□ **Auth**: Login, registration, password reset, session management
+### Coverage Checklist
 
-### DO NOT:
-- ❌ Test endpoints manually one by one
-- ❌ Wait for one worker to finish before spawning another
-- ❌ Do the exploitation yourself when a worker can do it
-- ❌ Forget to spawn validators for findings
-
-### DO:
-- ✅ Spawn 5-10 workers in parallel for coverage
-- ✅ Let workers handle all testing
-- ✅ Focus on coordination and synthesis
-- ✅ Spawn new workers as discoveries come in"""
+□ Endpoints: Every URL path gets a scanner
+□ Parameters: Every GET/POST param tested
+□ Confirmed Vulns: Each gets an exploiter worker!"""
 
     def _build_environment_section(self) -> str:
         """Build environment context section."""

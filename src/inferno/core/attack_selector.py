@@ -346,6 +346,9 @@ class AttackSelector:
         """Initialize the attack selector."""
         self._success_history: dict[str, int] = {}  # attack_name -> success count
         self._failure_history: dict[str, int] = {}  # attack_name -> failure count
+        self._attempted_attacks: set[str] = set()  # Attacks already tried
+        self._current_plan: AttackPlan | None = None  # Current attack plan
+        self._last_attack: str | None = None  # Last attack attempted
 
     def select_attacks(
         self,
@@ -539,6 +542,150 @@ class AttackSelector:
                 return attack.get("tools", [])
 
         return []
+
+    def record_attempt(
+        self,
+        attack_name: str,
+        success: bool | None = None,
+        tool_used: str = "",
+    ) -> None:
+        """
+        Record that an attack was attempted.
+
+        Args:
+            attack_name: Name of the attack attempted
+            success: Whether it succeeded (None if unknown yet)
+            tool_used: The tool that was used for this attack
+        """
+        self._attempted_attacks.add(attack_name)
+        self._last_attack = attack_name
+
+        if success is not None:
+            self.record_result(attack_name, success)
+
+        logger.info(
+            "attack_attempt_recorded",
+            attack=attack_name,
+            success=success,
+            tool=tool_used,
+            total_attempted=len(self._attempted_attacks),
+        )
+
+    def get_next_attack(
+        self,
+        technologies: list[str] | None = None,
+        hints: list[Hint] | None = None,
+        waf_detected: bool = False,
+        exclude_failed: bool = True,
+    ) -> AttackVector | None:
+        """
+        Get the next recommended attack to try.
+
+        Args:
+            technologies: Detected technologies (regenerates plan if provided)
+            hints: Extracted hints (regenerates plan if provided)
+            waf_detected: Whether a WAF was detected
+            exclude_failed: Whether to exclude attacks that have failed multiple times
+
+        Returns:
+            The next AttackVector to try, or None if all attacks exhausted
+        """
+        # Regenerate plan if technologies or hints provided
+        if technologies or hints:
+            self._current_plan = self.select_attacks(
+                technologies=technologies or [],
+                hints=hints,
+                waf_detected=waf_detected,
+            )
+
+        if not self._current_plan:
+            return None
+
+        # Find next untried attack with good priority
+        for vector in self._current_plan.vectors:
+            # Skip already attempted
+            if vector.name in self._attempted_attacks:
+                continue
+
+            # Skip attacks that have failed too many times
+            if exclude_failed:
+                failures = self._failure_history.get(vector.name, 0)
+                successes = self._success_history.get(vector.name, 0)
+                if failures >= 3 and successes == 0:
+                    continue
+
+            return vector
+
+        # All attacks exhausted
+        logger.info(
+            "all_attacks_exhausted",
+            attempted=len(self._attempted_attacks),
+            total=len(self._current_plan.vectors) if self._current_plan else 0,
+        )
+        return None
+
+    def get_attack_status(self) -> dict[str, Any]:
+        """
+        Get current attack selection status for reporting.
+
+        Returns:
+            Dict with attempted, remaining, successes, failures
+        """
+        total_vectors = len(self._current_plan.vectors) if self._current_plan else 0
+        remaining = total_vectors - len(self._attempted_attacks)
+
+        return {
+            "attempted": list(self._attempted_attacks),
+            "remaining": remaining,
+            "total": total_vectors,
+            "successes": dict(self._success_history),
+            "failures": dict(self._failure_history),
+            "last_attack": self._last_attack,
+        }
+
+    def detect_attack_from_tool(self, tool_name: str, tool_input: dict[str, Any]) -> str | None:
+        """
+        Detect what attack type is being performed based on tool and input.
+
+        Args:
+            tool_name: Name of the tool being used
+            tool_input: Input parameters to the tool
+
+        Returns:
+            Detected attack name or None
+        """
+        # Extract command or payload from input
+        command = tool_input.get("command", "")
+        body = tool_input.get("body", "")
+        url = tool_input.get("url", "")
+
+        combined = f"{command} {body} {url}".lower()
+
+        # Map patterns to attack types
+        attack_patterns = {
+            "sqli": ["sqlmap", "' or ", "union select", "' and ", "1=1", "sleep(", "waitfor delay"],
+            "xss": ["<script", "javascript:", "onerror=", "onload=", "alert(", "xsser"],
+            "ssrf": ["localhost", "127.0.0.1", "169.254.169.254", "file://", "dict://"],
+            "path_traversal": ["../", "..\\", "/etc/passwd", "/etc/shadow", "%2e%2e"],
+            "command_injection": ["; ", "| ", "& ", "$(", "${", "`", "nc ", "bash ", "sh "],
+            "ssti": ["{{", "}}", "{{config}}", "{{7*7}}", "${", "<%="],
+            "xxe": ["<!entity", "<!doctype", "system", "file://", "xml"],
+            "deserialization": ["ysoserial", "phpggc", "pickle", "marshal"],
+            "idor": ["id=", "user_id=", "account=", "order="],
+        }
+
+        for attack_name, patterns in attack_patterns.items():
+            if any(pattern in combined for pattern in patterns):
+                return attack_name
+
+        return None
+
+    def reset(self) -> None:
+        """Reset attempt history for a new session."""
+        self._attempted_attacks.clear()
+        self._current_plan = None
+        self._last_attack = None
+        logger.info("attack_selector_reset")
 
 
 # Global singleton
