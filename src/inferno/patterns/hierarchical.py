@@ -497,7 +497,8 @@ def create_coordinated_assessment_pattern(
     Create a coordinated assessment pattern.
 
     The coordinator delegates tasks to workers and aggregates results.
-    This matches Inferno's MetaCoordinator architecture.
+    This uses a hierarchical pattern where the main agent coordinates
+    specialized worker subagents via SwarmTool.
 
     Args:
         coordinator: The root coordinator agent.
@@ -508,7 +509,7 @@ def create_coordinated_assessment_pattern(
 
     Example:
         >>> pattern = create_coordinated_assessment_pattern(
-        ...     coordinator=meta_coordinator,
+        ...     coordinator=main_agent,
         ...     workers=[recon_worker, exploit_worker, validator_worker]
         ... )
     """
@@ -516,7 +517,7 @@ def create_coordinated_assessment_pattern(
         name="coordinated_assessment",
         root_agent=coordinator,
         description=(
-            "MetaCoordinator delegates to specialized workers: "
+            "Coordinator delegates to specialized workers: "
             "recon, exploit, validate, report"
         ),
         children=workers,

@@ -19,7 +19,9 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shlex
 import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +131,521 @@ def is_command_safe(command: str) -> tuple[bool, str | None]:
             return False, f"Dangerous pattern: {pattern}"
 
     return True, None
+
+
+# ============================================================================
+# Curl Interception for Auto-Bypass (WAF Evasion)
+# ============================================================================
+
+@dataclass
+class CurlParsed:
+    """Parsed curl command components."""
+
+    url: str = ""
+    method: str = "GET"
+    headers: dict[str, str] = field(default_factory=dict)
+    data: str | None = None
+    data_raw: str | None = None
+    form_data: dict[str, str] = field(default_factory=dict)
+    cookies: str | None = None
+    user_agent: str | None = None
+    verbose: bool = False
+    include_headers: bool = False
+    follow_redirects: bool = False
+    insecure: bool = False
+    output_file: str | None = None
+    extra_args: list[str] = field(default_factory=list)
+
+
+def _is_curl_command(cmd: str) -> bool:
+    """Check if command is a curl request."""
+    stripped = cmd.strip()
+    return stripped.startswith("curl ") or stripped == "curl"
+
+
+def _parse_curl_command(cmd: str) -> CurlParsed:
+    """Parse curl command into components."""
+    parsed = CurlParsed()
+
+    try:
+        # Use shlex to properly split the command
+        parts = shlex.split(cmd)
+    except ValueError:
+        # Fallback to simple split if shlex fails
+        parts = cmd.split()
+
+    if not parts or parts[0] != "curl":
+        return parsed
+
+    i = 1
+    while i < len(parts):
+        arg = parts[i]
+
+        # Method
+        if arg in ("-X", "--request") and i + 1 < len(parts):
+            parsed.method = parts[i + 1].upper()
+            i += 2
+            continue
+
+        # Data
+        if arg in ("-d", "--data", "--data-binary", "--data-urlencode") and i + 1 < len(parts):
+            parsed.data = parts[i + 1]
+            if parsed.method == "GET":
+                parsed.method = "POST"
+            i += 2
+            continue
+
+        # Raw data
+        if arg == "--data-raw" and i + 1 < len(parts):
+            parsed.data_raw = parts[i + 1]
+            if parsed.method == "GET":
+                parsed.method = "POST"
+            i += 2
+            continue
+
+        # Headers
+        if arg in ("-H", "--header") and i + 1 < len(parts):
+            header = parts[i + 1]
+            if ":" in header:
+                key, value = header.split(":", 1)
+                parsed.headers[key.strip()] = value.strip()
+            i += 2
+            continue
+
+        # User agent
+        if arg in ("-A", "--user-agent") and i + 1 < len(parts):
+            parsed.user_agent = parts[i + 1]
+            i += 2
+            continue
+
+        # Cookie
+        if arg in ("-b", "--cookie") and i + 1 < len(parts):
+            parsed.cookies = parts[i + 1]
+            i += 2
+            continue
+
+        # Form data
+        if arg in ("-F", "--form") and i + 1 < len(parts):
+            form = parts[i + 1]
+            if "=" in form:
+                key, value = form.split("=", 1)
+                parsed.form_data[key] = value
+            i += 2
+            continue
+
+        # Output file
+        if arg in ("-o", "--output") and i + 1 < len(parts):
+            parsed.output_file = parts[i + 1]
+            i += 2
+            continue
+
+        # Flags
+        if arg in ("-v", "--verbose"):
+            parsed.verbose = True
+            i += 1
+            continue
+        if arg in ("-i", "--include"):
+            parsed.include_headers = True
+            i += 1
+            continue
+        if arg in ("-L", "--location"):
+            parsed.follow_redirects = True
+            i += 1
+            continue
+        if arg in ("-k", "--insecure"):
+            parsed.insecure = True
+            i += 1
+            continue
+        if arg in ("-s", "--silent", "-S", "--show-error"):
+            i += 1
+            continue
+
+        # Skip other flags with values
+        if arg.startswith("-") and i + 1 < len(parts) and not parts[i + 1].startswith("-"):
+            parsed.extra_args.extend([arg, parts[i + 1]])
+            i += 2
+            continue
+        if arg.startswith("-"):
+            parsed.extra_args.append(arg)
+            i += 1
+            continue
+
+        # URL (anything not starting with -)
+        if not arg.startswith("-"):
+            parsed.url = arg
+            i += 1
+            continue
+
+        i += 1
+
+    return parsed
+
+
+def _rebuild_curl_command(parsed: CurlParsed, new_payload: str) -> str:
+    """Rebuild curl command with mutated payload."""
+    parts = ["curl"]
+
+    # Method (only if not GET)
+    if parsed.method != "GET":
+        parts.extend(["-X", parsed.method])
+
+    # Headers
+    for key, value in parsed.headers.items():
+        parts.extend(["-H", f"{key}: {value}"])
+
+    # User agent
+    if parsed.user_agent:
+        parts.extend(["-A", parsed.user_agent])
+
+    # Cookie
+    if parsed.cookies:
+        parts.extend(["-b", parsed.cookies])
+
+    # Flags
+    if parsed.verbose:
+        parts.append("-v")
+    if parsed.include_headers:
+        parts.append("-i")
+    if parsed.follow_redirects:
+        parts.append("-L")
+    if parsed.insecure:
+        parts.append("-k")
+
+    # Output file
+    if parsed.output_file:
+        parts.extend(["-o", parsed.output_file])
+
+    # Data with new payload
+    if parsed.data is not None:
+        parts.extend(["-d", new_payload])
+    elif parsed.data_raw is not None:
+        parts.extend(["--data-raw", new_payload])
+
+    # Extra args
+    parts.extend(parsed.extra_args)
+
+    # URL
+    if parsed.url:
+        parts.append(parsed.url)
+
+    # Use shlex.join to properly quote
+    return shlex.join(parts)
+
+
+def _detect_payload_context(payload: str) -> str:
+    """Detect what type of payload this is (sql, xss, cmd, path, generic)."""
+    payload_lower = payload.lower()
+
+    # SQL patterns
+    sql_patterns = [
+        r"select\s+", r"union\s+", r"insert\s+", r"update\s+", r"delete\s+",
+        r"drop\s+", r"or\s+\d+=\d+", r"and\s+\d+=\d+", r"'\s*or\s*'", r"--",
+        r";\s*select", r"'\s*union", r"order\s+by", r"group\s+by",
+    ]
+    if any(re.search(p, payload_lower) for p in sql_patterns):
+        return "sql"
+
+    # XSS patterns
+    xss_patterns = [
+        r"<script", r"javascript:", r"onerror\s*=", r"onload\s*=",
+        r"<img\s+", r"<svg\s+", r"alert\s*\(", r"document\.",
+    ]
+    if any(re.search(p, payload_lower) for p in xss_patterns):
+        return "xss"
+
+    # Command injection patterns
+    cmd_patterns = [
+        r";\s*\w+", r"\|\s*\w+", r"`\w+`", r"\$\(\w+\)",
+        r"&&\s*\w+", r"\|\|\s*\w+",
+    ]
+    if any(re.search(p, payload_lower) for p in cmd_patterns):
+        return "cmd"
+
+    # Path traversal patterns
+    path_patterns = [r"\.\./", r"\.\.\\", r"/etc/", r"c:\\"]
+    if any(re.search(p, payload_lower) for p in path_patterns):
+        return "path"
+
+    return "generic"
+
+
+def _is_response_blocked(output: str) -> tuple[bool, int | None]:
+    """Check if curl output indicates a blocked response."""
+    # Check for HTTP status codes that indicate blocking
+    status_match = re.search(r"HTTP/[\d.]+\s+(\d{3})", output)
+    status_code = int(status_match.group(1)) if status_match else None
+
+    blocked_statuses = {403, 406, 429, 503}
+    if status_code in blocked_statuses:
+        return True, status_code
+
+    # Check for WAF block messages in body
+    block_patterns = [
+        r"access denied",
+        r"request blocked",
+        r"forbidden",
+        r"security violation",
+        r"waf",
+        r"firewall",
+        r"cloudflare",
+        r"incapsula",
+        r"sucuri",
+        r"wordfence",
+    ]
+    output_lower = output.lower()
+    if any(re.search(p, output_lower) for p in block_patterns):
+        return True, status_code
+
+    return False, status_code
+
+
+async def _execute_curl_with_auto_bypass(
+    command: str,
+    output: str,
+    timeout: int,
+    cwd: Path | None,
+) -> tuple[str, bool]:
+    """
+    Attempt to bypass WAF by mutating payload and retrying.
+
+    Returns:
+        Tuple of (final_output, bypass_succeeded)
+    """
+    # Only proceed if enabled (default: enabled)
+    if os.getenv("INFERNO_AUTO_BYPASS", "true").lower() == "false":
+        return output, False
+
+    parsed = _parse_curl_command(command)
+
+    # Get the payload to mutate
+    payload = parsed.data or parsed.data_raw
+    if not payload:
+        # No payload to mutate, can't bypass
+        return output, False
+
+    try:
+        from inferno.core.payload_mutator import get_payload_mutator
+        from inferno.core.response_analyzer import get_response_analyzer
+
+        mutator = get_payload_mutator()
+        analyzer = get_response_analyzer()
+
+        # Analyze what's blocking us
+        is_blocked, status_code = _is_response_blocked(output)
+        if not is_blocked:
+            return output, False
+
+        # Get detailed analysis
+        analysis = analyzer.analyze(
+            body=output,
+            status_code=status_code or 403,
+            headers={},
+            original_payload=payload,
+        )
+
+        # Generate mutations
+        context = _detect_payload_context(payload)
+        waf_type = analysis.waf_type.value if analysis.waf_type else None
+
+        mutation_result = mutator.mutate(
+            payload=payload,
+            context=context,
+            max_mutations=5,
+            waf_type=waf_type,
+        )
+
+        if not mutation_result.mutations:
+            return output, False
+
+        # Try mutations
+        bypass_output = output
+        bypass_output += f"\n\n{'='*60}\n"
+        bypass_output += f"[AUTO-BYPASS] WAF detected: {analysis.waf_type.value if analysis.waf_type else 'unknown'}\n"
+        bypass_output += f"[AUTO-BYPASS] Block type: {analysis.block_type.value}\n"
+        bypass_output += f"[AUTO-BYPASS] Trying {len(mutation_result.mutations)} mutations...\n"
+
+        for i, mutation in enumerate(mutation_result.mutations[:3]):  # Try top 3
+            mutated_cmd = _rebuild_curl_command(parsed, mutation.mutated)
+
+            bypass_output += f"\n[AUTO-BYPASS] Attempt {i+1}: {mutation.mutation_type.value}\n"
+            bypass_output += f"  Payload: {mutation.mutated[:100]}{'...' if len(mutation.mutated) > 100 else ''}\n"
+
+            # Execute mutated command
+            try:
+                process = await asyncio.create_subprocess_shell(
+                    mutated_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                )
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout,
+                )
+                retry_output = stdout.decode("utf-8", errors="replace")
+                if stderr:
+                    retry_output += "\n" + stderr.decode("utf-8", errors="replace")
+
+                # Check if retry succeeded
+                retry_blocked, retry_status = _is_response_blocked(retry_output)
+                if not retry_blocked:
+                    # SUCCESS!
+                    mutator.record_result(payload, mutation.mutated, success=True)
+                    bypass_output += "  [SUCCESS] Bypass worked!\n"
+                    bypass_output += f"{'='*60}\n"
+                    bypass_output += f"\n{retry_output}"
+
+                    logger.info(
+                        "curl_auto_bypass_success",
+                        mutation_type=mutation.mutation_type.value,
+                        original_payload_preview=payload[:50],
+                    )
+                    return bypass_output, True
+                else:
+                    bypass_output += f"  [FAILED] Still blocked (status: {retry_status})\n"
+                    mutator.record_result(payload, mutation.mutated, success=False)
+
+            except TimeoutError:
+                bypass_output += "  [FAILED] Timeout\n"
+            except Exception as e:
+                bypass_output += f"  [FAILED] Error: {e}\n"
+
+        # All mutations failed
+        bypass_output += "\n[AUTO-BYPASS] All mutations failed.\n"
+        bypass_output += "[AUTO-BYPASS] Manual bypasses to try:\n"
+        for bypass in analysis.suggested_bypasses[:5]:
+            bypass_output += f"  - {bypass}\n"
+        bypass_output += f"{'='*60}\n"
+
+        return bypass_output, False
+
+    except ImportError as e:
+        logger.warning("curl_bypass_import_error", error=str(e))
+        return output, False
+    except Exception as e:
+        logger.error("curl_bypass_error", error=str(e))
+        return output, False
+
+
+async def _execute_docker_curl_with_auto_bypass(
+    command: str,
+    output: str,
+    timeout: int,
+    workdir: str,
+    docker_manager: Any,
+) -> tuple[str, bool]:
+    """
+    Attempt to bypass WAF by mutating payload and retrying via Docker.
+
+    Returns:
+        Tuple of (final_output, bypass_succeeded)
+    """
+    # Only proceed if enabled (default: enabled)
+    if os.getenv("INFERNO_AUTO_BYPASS", "true").lower() == "false":
+        return output, False
+
+    parsed = _parse_curl_command(command)
+
+    # Get the payload to mutate
+    payload = parsed.data or parsed.data_raw
+    if not payload:
+        return output, False
+
+    try:
+        from inferno.core.payload_mutator import get_payload_mutator
+        from inferno.core.response_analyzer import get_response_analyzer
+
+        mutator = get_payload_mutator()
+        analyzer = get_response_analyzer()
+
+        # Analyze what's blocking us
+        is_blocked, status_code = _is_response_blocked(output)
+        if not is_blocked:
+            return output, False
+
+        # Get detailed analysis
+        analysis = analyzer.analyze(
+            body=output,
+            status_code=status_code or 403,
+            headers={},
+            original_payload=payload,
+        )
+
+        # Generate mutations
+        context = _detect_payload_context(payload)
+        waf_type = analysis.waf_type.value if analysis.waf_type else None
+
+        mutation_result = mutator.mutate(
+            payload=payload,
+            context=context,
+            max_mutations=5,
+            waf_type=waf_type,
+        )
+
+        if not mutation_result.mutations:
+            return output, False
+
+        # Try mutations via Docker
+        bypass_output = output
+        bypass_output += f"\n\n{'='*60}\n"
+        bypass_output += f"[AUTO-BYPASS] WAF detected: {analysis.waf_type.value if analysis.waf_type else 'unknown'}\n"
+        bypass_output += f"[AUTO-BYPASS] Block type: {analysis.block_type.value}\n"
+        bypass_output += f"[AUTO-BYPASS] Trying {len(mutation_result.mutations)} mutations (Docker)...\n"
+
+        for i, mutation in enumerate(mutation_result.mutations[:3]):
+            mutated_cmd = _rebuild_curl_command(parsed, mutation.mutated)
+
+            bypass_output += f"\n[AUTO-BYPASS] Attempt {i+1}: {mutation.mutation_type.value}\n"
+            bypass_output += f"  Payload: {mutation.mutated[:100]}{'...' if len(mutation.mutated) > 100 else ''}\n"
+
+            try:
+                # Execute via Docker
+                result = await docker_manager.execute_in_kali(
+                    mutated_cmd,
+                    timeout=timeout,
+                    workdir=workdir,
+                )
+                retry_output = result["stdout"]
+                if result["stderr"]:
+                    retry_output += "\n" + result["stderr"]
+
+                # Check if retry succeeded
+                retry_blocked, retry_status = _is_response_blocked(retry_output)
+                if not retry_blocked:
+                    # SUCCESS!
+                    mutator.record_result(payload, mutation.mutated, success=True)
+                    bypass_output += "  [SUCCESS] Bypass worked!\n"
+                    bypass_output += f"{'='*60}\n"
+                    bypass_output += f"\n{retry_output}"
+
+                    logger.info(
+                        "docker_curl_auto_bypass_success",
+                        mutation_type=mutation.mutation_type.value,
+                        original_payload_preview=payload[:50],
+                    )
+                    return bypass_output, True
+                else:
+                    bypass_output += f"  [FAILED] Still blocked (status: {retry_status})\n"
+                    mutator.record_result(payload, mutation.mutated, success=False)
+
+            except Exception as e:
+                bypass_output += f"  [FAILED] Error: {e}\n"
+
+        # All mutations failed
+        bypass_output += "\n[AUTO-BYPASS] All mutations failed.\n"
+        bypass_output += "[AUTO-BYPASS] Manual bypasses to try:\n"
+        for bypass in analysis.suggested_bypasses[:5]:
+            bypass_output += f"  - {bypass}\n"
+        bypass_output += f"{'='*60}\n"
+
+        return bypass_output, False
+
+    except ImportError as e:
+        logger.warning("docker_curl_bypass_import_error", error=str(e))
+        return output, False
+    except Exception as e:
+        logger.error("docker_curl_bypass_error", error=str(e))
+        return output, False
 
 
 # ============================================================================
@@ -423,6 +940,37 @@ async def execute_command(
             output_length=len(output),
         )
 
+        # ================================================================
+        # CURL AUTO-BYPASS: If curl command got blocked, try mutations
+        # ================================================================
+        if _is_curl_command(command):
+            is_blocked, status_code = _is_response_blocked(output)
+            if is_blocked:
+                logger.info(
+                    "curl_blocked_detected",
+                    status_code=status_code,
+                    command_preview=command[:100],
+                )
+                # Try auto-bypass with payload mutations
+                bypass_output, bypass_succeeded = await _execute_curl_with_auto_bypass(
+                    command=command,
+                    output=output,
+                    timeout=timeout,
+                    cwd=cwd,
+                )
+                return ToolResult(
+                    success=bypass_succeeded,
+                    output=bypass_output,
+                    error=None if bypass_succeeded else f"Blocked (status: {status_code})",
+                    metadata={
+                        "return_code": process.returncode,
+                        "command": command,
+                        "auto_bypass_attempted": True,
+                        "auto_bypass_succeeded": bypass_succeeded,
+                    }
+                )
+        # ================================================================
+
         return ToolResult(
             success=success,
             output=output,
@@ -531,6 +1079,38 @@ async def generic_linux_command(
     max_size = 100000
     if len(output) > max_size:
         output = output[:max_size] + f"\n\n[Output truncated at {max_size} chars]"
+
+    # ================================================================
+    # CURL AUTO-BYPASS: If curl command got blocked, try mutations
+    # ================================================================
+    if _is_curl_command(command):
+        is_blocked, status_code = _is_response_blocked(output)
+        if is_blocked:
+            logger.info(
+                "docker_curl_blocked_detected",
+                status_code=status_code,
+                command_preview=command[:100],
+            )
+            # Try auto-bypass with Docker execution
+            bypass_output, bypass_succeeded = await _execute_docker_curl_with_auto_bypass(
+                command=command,
+                output=output,
+                timeout=timeout,
+                workdir=workdir,
+                docker_manager=docker,
+            )
+            return ToolResult(
+                success=bypass_succeeded,
+                output=bypass_output,
+                error=None if bypass_succeeded else f"Blocked (status: {status_code})",
+                metadata={
+                    "return_code": result["return_code"],
+                    "command": command,
+                    "auto_bypass_attempted": True,
+                    "auto_bypass_succeeded": bypass_succeeded,
+                }
+            )
+    # ================================================================
 
     return ToolResult(
         success=result["success"],

@@ -2,14 +2,10 @@
 Inferno Swarm Package.
 
 This module exports the swarm-as-tool pattern for spawning
-specialized sub-agents, and the MetaCoordinator for subagent-driven
-assessments.
+specialized sub-agents.
 
 Architecture:
-- SwarmTool: Spawn individual subagents on demand
-- MetaCoordinator: Orchestrate full assessment via worker subagents
-  - Coordinator ONLY plans, validates, and synthesizes
-  - Worker subagents do ALL actual work (recon, exploit, report)
+- SwarmTool: Spawn individual subagents on demand for parallel work
 - ParallelSwarmOrchestrator: TRUE PARALLEL execution like Claude Code
   - Intelligent task decomposition
   - Dependency-aware scheduling
@@ -20,6 +16,9 @@ Communication:
 - MessageBus: Real-time inter-agent communication
   - Broadcast findings, endpoints, attack chains
   - Request/response between specific agents
+
+NOTE: MetaCoordinator was removed as a separate architecture.
+The main agent loop now directly uses SwarmTool for parallel subagents.
 """
 
 from inferno.swarm.agents import SubAgentConfig, SubAgentType
@@ -35,15 +34,6 @@ from inferno.swarm.message_bus import (
     request_validation,
     reset_message_bus,
 )
-from inferno.swarm.meta_coordinator import (
-    AssessmentPhase,
-    AssessmentState,
-    Finding,
-    FindingStatus,
-    MetaCoordinator,
-    WorkerTask,
-    WorkerType,
-)
 from inferno.swarm.parallel_orchestrator import (
     ParallelSwarmOrchestrator,
     ParallelTask,
@@ -55,18 +45,10 @@ from inferno.swarm.parallel_orchestrator import (
 from inferno.swarm.tool import SwarmTool
 
 __all__ = [
-    # Swarm tool (original)
+    # Swarm tool (primary way to spawn subagents)
     "SwarmTool",
     "SubAgentType",
     "SubAgentConfig",
-    # MetaCoordinator (subagent-driven architecture)
-    "MetaCoordinator",
-    "AssessmentPhase",
-    "WorkerType",
-    "WorkerTask",
-    "Finding",
-    "FindingStatus",
-    "AssessmentState",
     # ParallelSwarmOrchestrator (Claude Code-style parallel execution)
     "ParallelSwarmOrchestrator",
     "ParallelTask",

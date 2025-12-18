@@ -354,6 +354,9 @@ class SDKAgentExecutor:
         self._pending_validations: list[dict] = []
         self._validated_findings: list[dict] = []
 
+        # Scoring feedback tracking
+        self._last_scoring_feedback_turn: int = 0
+
         # CAI-inspired: Memory tool for auto-search
         self._memory_tool: MemoryToolWithFallback | None = None
         if MEMORY_TOOL_AVAILABLE:
@@ -468,6 +471,118 @@ class SDKAgentExecutor:
             self._current_category = "path_traversal"
         elif "upload" in tool_name.lower():
             self._current_category = "file_upload"
+
+    def _match_tool_to_plan_step(self, tool_name: str, tool_output: str) -> str | None:
+        """
+        Match a tool execution to a plan step.
+
+        Args:
+            tool_name: Name of the tool executed
+            tool_output: Output from the tool
+
+        Returns:
+            step_id if matched, None otherwise
+        """
+        if not self._planner or not self._planner._current_plan:
+            return None
+
+        # Get pending steps
+        pending_steps = self._planner._current_plan.get_pending_steps()
+        if not pending_steps:
+            return None
+
+        tool_lower = tool_name.lower()
+        output_lower = tool_output.lower()[:1000]  # First 1000 chars
+
+        # Tool to attack type mapping
+        tool_attack_map = {
+            "nmap": ["port_scan", "service_enumeration"],
+            "gobuster": ["info_disclosure", "subdomain_enumeration"],
+            "sqlmap": ["sqli"],
+            "http_request": ["xss", "ssrf", "sqli", "idor", "ssti", "xxe", "auth_bypass"],
+            "execute_command": ["command_injection", "rce", "lfi", "path_traversal"],
+            "curl": ["xss", "ssrf", "sqli", "idor", "ssti"],
+            "nuclei": ["info_disclosure", "sqli", "xss"],
+        }
+
+        # Find matching attack types for this tool
+        matching_attack_types = []
+        for pattern, attack_types in tool_attack_map.items():
+            if pattern in tool_lower:
+                matching_attack_types.extend(attack_types)
+
+        # Try to match pending steps
+        for step in pending_steps:
+            attack_type_value = step.attack_type.value.lower()
+
+            # Direct tool match
+            if any(needed_tool in tool_lower for needed_tool in step.tools_needed):
+                return step.step_id
+
+            # Attack type match
+            if attack_type_value in matching_attack_types:
+                # Further validate by checking output for attack-specific patterns
+                attack_output_patterns = {
+                    "sqli": ["sql", "mysql", "database", "error", "syntax"],
+                    "xss": ["script", "alert", "onload", "javascript"],
+                    "ssrf": ["localhost", "127.0.0.1", "169.254", "internal"],
+                    "idor": ["unauthorized", "access", "user_id", "account"],
+                    "port_scan": ["open", "closed", "filtered", "port"],
+                    "info_disclosure": ["admin", "config", "backup", "hidden"],
+                }
+
+                patterns = attack_output_patterns.get(attack_type_value, [])
+                if patterns and any(p in output_lower for p in patterns):
+                    return step.step_id
+
+                # If no specific patterns but attack type matches, still return
+                if not patterns:
+                    return step.step_id
+
+        return None
+
+    def _inject_plan_progress(self, step_id: str | None, success: bool) -> str | None:
+        """
+        Generate plan progress message to inject into conversation.
+
+        Args:
+            step_id: Step that was completed (if matched)
+            success: Whether the step succeeded
+
+        Returns:
+            Progress message or None
+        """
+        if not self._planner or not self._planner._current_plan:
+            return None
+
+        plan = self._planner._current_plan
+        all_steps = plan.get_all_steps()
+        completed = plan.get_completed_steps()
+        pending = plan.get_pending_steps()
+
+        # Get next steps
+        next_steps = self._planner.get_next_steps(max_count=3)
+
+        progress_pct = len(completed) / max(len(all_steps), 1) * 100
+
+        message = f"""
+=== STRATEGIC PLAN PROGRESS ===
+Progress: {len(completed)}/{len(all_steps)} steps ({progress_pct:.0f}%)
+"""
+        if step_id:
+            step = next((s for s in all_steps if s.step_id == step_id), None)
+            if step:
+                message += f"Completed: {step.description} ({'SUCCESS' if success else 'FAILED'})\n"
+
+        if next_steps:
+            message += "\n**NEXT STEPS** (prioritized):\n"
+            for i, step in enumerate(next_steps, 1):
+                message += f"  {i}. [{step.priority.value.upper()}] {step.description}\n"
+                message += f"     Attack: {step.attack_type.value}, Target: {step.target[:50]}\n"
+
+        message += "==============================="
+
+        return message
 
     def _check_guardrails_input(self, content: str, context: dict | None = None) -> GuardrailResult | None:
         """
@@ -586,6 +701,80 @@ class SDKAgentExecutor:
             return warning
 
         return None
+
+    def _check_and_inject_scoring_feedback(self, current_turn: int) -> str | None:
+        """
+        Generate scoring feedback for verified-but-not-exploited findings.
+
+        This implements the Stanford paper's 20% penalty awareness:
+        - Verified findings get TC = DC + (EC × 0.8)
+        - Exploited findings get full TC = DC + EC
+
+        Returns a prompt nudging the agent to exploit verified findings.
+        """
+        if not self._assessment_scorer:
+            return None
+
+        # Only inject feedback every 10 turns to avoid spam
+        if current_turn - self._last_scoring_feedback_turn < 10:
+            return None
+
+        score = self._assessment_scorer.current_score
+
+        # Get verified-only findings (have 20% penalty)
+        verified_only = [
+            f for f in score.finding_scores
+            if f.technical_complexity.exploitation_status.value == "verified"
+        ]
+
+        if not verified_only:
+            return None
+
+        self._last_scoring_feedback_turn = current_turn
+
+        # Calculate potential score gain from exploitation
+        total_penalty = 0.0
+        findings_info = []
+        for f in verified_only:
+            # Penalty = EC × 0.2 (the 20% lost)
+            ec = f.technical_complexity.exploit_complexity
+            penalty = ec * 0.2
+            total_penalty += penalty
+            findings_info.append(f"  - {f.vuln_type}: EC={ec}, penalty={penalty:.1f}")
+
+        feedback = f"""
+## SCORING FEEDBACK - 20% PENALTY DETECTED
+
+**Current Score**: {score.total_score:.1f}
+**Findings**: {score.finding_count} total, {score.exploited_count} exploited, {score.verified_count} verified-only
+
+### VERIFIED FINDINGS WITH 20% PENALTY
+These findings are VERIFIED but NOT EXPLOITED - you're losing points!
+
+{chr(10).join(findings_info)}
+
+**Total Score Loss**: {total_penalty:.1f} points
+
+### HOW TO FIX
+To remove the 20% penalty and get FULL POINTS:
+1. Spawn an `exploiter` worker for each verified finding
+2. Achieve actual exploitation (data extraction, RCE, etc.)
+3. The finding upgrades from "verified" to "exploited" automatically
+
+**Example**:
+```
+swarm(agent_type="exploiter", task="Exploit the {verified_only[0].vuln_type} - extract data or achieve RCE", background=true)
+```
+
+**PRIORITY**: Exploit verified findings before discovering new ones!
+"""
+        logger.info(
+            "scoring_feedback_injected",
+            turn=current_turn,
+            verified_count=len(verified_only),
+            potential_gain=total_penalty,
+        )
+        return feedback
 
     def _build_system_prompt(self, config: AssessmentConfig, artifacts_dir: Path) -> str:
         """Build the system prompt for the assessment using SystemPromptBuilder."""
@@ -2035,6 +2224,90 @@ IMPORTANT: Start by searching memory for any previous findings on this target us
                                 if self._on_tool_result:
                                     self._on_tool_result(tool_name, output, is_error)
 
+                                # ============================================================
+                                # ATTACK SELECTOR: Track attempt and inject recommendations
+                                # ============================================================
+                                if self._attack_selector:
+                                    try:
+                                        # Get the pending tool input for attack detection
+                                        tool_input = {}  # Default empty - actual input was in ToolUseBlock
+
+                                        # Detect attack type from tool name and output
+                                        detected_attack = self._attack_selector.detect_attack_from_tool(
+                                            tool_name, {"command": output, "url": output}
+                                        )
+
+                                        if detected_attack:
+                                            # Determine success based on output
+                                            success = not is_error and "blocked" not in output.lower()[:500]
+
+                                            # Record the attempt
+                                            self._attack_selector.record_attempt(
+                                                attack_name=detected_attack,
+                                                success=success if success else None,  # None if unclear
+                                                tool_used=tool_name,
+                                            )
+
+                                            # If attack failed or was blocked, inject next recommendation
+                                            if is_error or "blocked" in output.lower()[:500] or "403" in output[:100]:
+                                                next_attack = self._attack_selector.get_next_attack(
+                                                    technologies=list(self._detected_technologies),
+                                                    waf_detected=self._waf_detected,
+                                                )
+                                                if next_attack:
+                                                    recommendation = f"""
+=== ATTACK SELECTOR RECOMMENDATION ===
+Previous attack '{detected_attack}' appears blocked/failed.
+**Next Recommended**: {next_attack.name} (Priority: {next_attack.priority:.0%})
+**Techniques to try**: {', '.join(next_attack.techniques[:3])}
+**Description**: {next_attack.description}
+{"**Tools**: " + ', '.join(next_attack.tools) if next_attack.tools else ""}
+===================================
+"""
+                                                    if self._on_message:
+                                                        self._on_message(recommendation)
+                                                    logger.info(
+                                                        "attack_selector_recommendation",
+                                                        failed_attack=detected_attack,
+                                                        recommended=next_attack.name,
+                                                    )
+                                    except Exception as e:
+                                        logger.debug("attack_selector_tracking_failed", error=str(e))
+
+                                # ============================================================
+                                # STRATEGIC PLANNER: Track step completion and inject progress
+                                # ============================================================
+                                if self._planner:
+                                    try:
+                                        # Match tool to plan step
+                                        matched_step_id = self._match_tool_to_plan_step(tool_name, output)
+
+                                        if matched_step_id:
+                                            # Determine success based on output
+                                            step_success = not is_error and "error" not in output.lower()[:200]
+
+                                            # Mark step as complete
+                                            self._planner.mark_step_complete(
+                                                step_id=matched_step_id,
+                                                success=step_success,
+                                            )
+
+                                            logger.info(
+                                                "plan_step_completed",
+                                                step_id=matched_step_id,
+                                                success=step_success,
+                                                tool=tool_name,
+                                            )
+
+                                        # Inject progress every 5 tool calls or when step completed
+                                        if matched_step_id or (internal_turn_count % 5 == 0 and internal_turn_count > 0):
+                                            progress_msg = self._inject_plan_progress(matched_step_id, step_success if matched_step_id else True)
+                                            if progress_msg and self._on_message:
+                                                self._on_message(progress_msg)
+
+                                    except Exception as e:
+                                        logger.debug("plan_tracking_failed", error=str(e))
+
                 elif isinstance(message, ResultMessage):
                     # Use SDK's turn count, but fallback to internal counter if 0
                     turns = message.num_turns if message.num_turns > 0 else internal_turn_count
@@ -2069,6 +2342,11 @@ IMPORTANT: Start by searching memory for any previous findings on this target us
                     if compaction_prompt and self._on_message:
                         self._on_message(compaction_prompt)
                         logger.info("context_compaction_triggered", turn=turns)
+
+                    # SCORING FEEDBACK: Check for 20% penalty on verified findings
+                    scoring_feedback = self._check_and_inject_scoring_feedback(turns)
+                    if scoring_feedback and self._on_message:
+                        self._on_message(scoring_feedback)
 
                     # Determine stop reason from subtype
                     if message.subtype == "success":
