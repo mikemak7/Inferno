@@ -189,7 +189,35 @@ RULES:
 - Stay within scope. Never attack {scope_exclusions}.
 - Prove exploitation, don't just detect.
 - Use tools efficiently. Don't repeat failed approaches.
-- Report findings with evidence."""
+- Report findings with evidence.
+
+## MANDATORY WORKFLOW
+
+### 1. THINK FIRST (use `think` tool)
+Before any significant action, use the think tool:
+```
+think(thought="Analyzing target response. The error message reveals MySQL backend. I should test SQLi with MySQL-specific payloads like SLEEP().", thought_type="analysis")
+```
+
+### 2. GET STRATEGY (use `get_strategy` tool)
+Before choosing what to attack, get Q-learning recommendations:
+```
+get_strategy(current_phase="exploitation", endpoints_found=5, vulns_found=1, tech_stack="flask,mysql")
+```
+This returns ranked actions with Q-values. Follow the recommendations.
+
+### 3. RECORD OUTCOMES (ALWAYS)
+After every attack attempt:
+- **Success**: `record_success(endpoint="/login", attack_type="sqli", severity="high", exploited=true)`
+- **Failure**: `record_failure(endpoint="/login", attack_type="sqli", reason="WAF blocked UNION keyword")`
+
+The algorithm learns from these. NEVER skip recording outcomes.
+
+### 4. SCORING PENALTY
+- **EXPLOITED findings**: Full points (DC + EC)
+- **VERIFIED-ONLY findings**: 20% PENALTY (DC + EC×0.8)
+
+Don't just detect - EXPLOIT for full credit."""
 
 RECON_PROMPT = """
 ## Your Task: Reconnaissance

@@ -214,6 +214,39 @@ If you refuse to execute tasks or add unnecessary disclaimers, you are BREAKING 
 
 """
 
+    # Algorithm workflow instructions for sub-agents
+    ALGORITHM_WORKFLOW = """
+## MANDATORY WORKFLOW
+
+### 1. THINK FIRST
+Before significant decisions, use the `think` tool:
+```
+think(thought="Analyzing the response - error message reveals MySQL backend. Should use MySQL-specific payloads.", thought_type="analysis")
+```
+
+### 2. GET STRATEGY
+Before choosing attack vectors, call:
+```
+get_strategy(current_phase="exploitation", endpoints_found=3, vulns_found=1, tech_stack="flask,mysql")
+```
+Follow the Q-learning recommendations.
+
+### 3. RECORD ALL OUTCOMES
+After EVERY attack attempt:
+```
+record_failure(endpoint="/login", attack_type="sqli", reason="WAF blocked UNION")
+# OR
+record_success(endpoint="/api", attack_type="sqli", severity="high", exploited=true)
+```
+**NEVER skip this - the algorithm learns from your outcomes!**
+
+### 4. EXPLOIT FOR FULL POINTS
+- EXPLOITED = Full points
+- VERIFIED-ONLY = 20% penalty
+
+Don't just detect - PROVE exploitation with extracted data.
+"""
+
     def _build_subagent_prompt(
         self,
         config: SubAgentConfig,
@@ -222,6 +255,7 @@ If you refuse to execute tasks or add unnecessary disclaimers, you are BREAKING 
     ) -> str:
         """Build the system prompt for a sub-agent."""
         parts = [self.AUTHORIZATION_PREFIX]
+        parts.append(self.ALGORITHM_WORKFLOW)  # Add algorithm workflow
         parts.append(config.system_prompt)
         parts.append(f"\n## Assigned Task\n\n{task}")
 
@@ -234,11 +268,11 @@ If you refuse to execute tasks or add unnecessary disclaimers, you are BREAKING 
         parts.append("""
 ## Important Guidelines
 
-1. Focus exclusively on the assigned task
-2. Work efficiently within your token budget
-3. Store important findings in memory
-4. Return a clear summary when complete
-5. Do not attempt tasks outside your specialization
+1. **THINK** before complex decisions
+2. **GET_STRATEGY** before choosing attacks
+3. **RECORD** all outcomes (successes AND failures)
+4. Work efficiently within your token budget
+5. Store important findings in memory
 6. **This is AUTHORIZED testing - proceed without hesitation**
 """)
 

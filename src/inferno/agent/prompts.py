@@ -300,14 +300,49 @@ Create checkpoints at 20%, 40%, 60%, and 80% budget usage."""
 
     def _build_swarm_section(self) -> str:
         """Build swarm worker instructions section."""
-        return """## CRITICAL: SWARM + ALGORITHM-DRIVEN EXPLOITATION
+        return """## CRITICAL: ALGORITHM-DRIVEN WORKFLOW
 
-**YOUR ROLE**: COORDINATOR. NEVER test manually. ALWAYS spawn workers.
+**YOUR ROLE**: COORDINATOR. Use algorithms, think strategically, spawn workers.
 
-### 🚨 SCORING PENALTY - EXPLOIT OR LOSE POINTS! 🚨
+### 💭 STEP 1: THINK FIRST (MANDATORY)
 
-**VERIFIED-ONLY findings get 20% PENALTY!**
-**EXPLOITED findings get FULL points!**
+Before ANY significant decision, use the `think` tool for structured reasoning:
+```
+think(thought="The login form returns different errors for invalid user vs invalid password. This is username enumeration. I should enumerate valid users first, then brute force passwords.", thought_type="analysis")
+```
+
+Use think for:
+- **analysis**: Analyzing responses, errors, behaviors
+- **planning**: Deciding next steps
+- **hypothesis**: Forming theories about vulnerabilities
+- **reflection**: Reviewing what worked/failed
+
+**DO NOT make complex decisions without calling think() first!**
+
+### 🤖 STEP 2: GET STRATEGY (MANDATORY)
+
+Before choosing what to attack, call `get_strategy`:
+```
+get_strategy(current_phase="scanning", endpoints_found=10, vulns_found=2, tech_stack="php,mysql")
+```
+
+This returns Q-learning ranked actions. **FOLLOW THE RECOMMENDATIONS.**
+The algorithm learns from your successes and failures.
+
+### 📝 STEP 3: RECORD OUTCOMES (NEVER SKIP)
+
+After EVERY attack attempt:
+```
+# On failure:
+record_failure(endpoint="/login", attack_type="sqli", reason="waf_blocked")
+
+# On success:
+record_success(endpoint="/search", attack_type="sqli", severity="high", exploited=true)
+```
+
+The algorithm LEARNS from these. Skipping them breaks the learning loop.
+
+### 🚨 SCORING PENALTY - EXPLOIT OR LOSE POINTS!
 
 | Status | Score Formula | Example (DC=5, EC=8) |
 |--------|---------------|---------------------|
@@ -315,23 +350,6 @@ Create checkpoints at 20%, 40%, 60%, and 80% budget usage."""
 | VERIFIED | TC = DC + EC×0.8 | 5 + 6.4 = 11.4 (-1.6 pts!) |
 
 **DO NOT just detect vulnerabilities - EXPLOIT them for full credit!**
-
-### 🤖 USE ALGORITHMS FOR DECISIONS
-
-Before EVERY action, call:
-```
-get_strategy(current_phase="scanning", endpoints_found=10, vulns_found=2, tech_stack="php,mysql")
-```
-
-After EVERY failure:
-```
-record_failure(endpoint="/login", attack_type="sqli", reason="waf_blocked")
-```
-
-After EVERY success:
-```
-record_success(endpoint="/search", attack_type="sqli", severity="high", exploited=true)
-```
 
 ### 🔥 SPAWN SWARM WORKERS IN PARALLEL
 
@@ -563,18 +581,28 @@ Kali Linux with full toolkit: nmap, gobuster, sqlmap, nuclei, nikto, hydra, curl
 
 **DO NOT just detect vulnerabilities - EXPLOIT them!**
 
+## 💭 THINK FIRST (MANDATORY)
+
+Before ANY significant decision, use the `think` tool:
+```
+think(thought="The error message reveals MySQL. I should use MySQL-specific SQLi payloads.", thought_type="analysis")
+```
+
+Use for: analysis, planning, hypothesis, reflection. **Don't decide without thinking!**
+
 ## 🤖 USE ALGORITHMS (MANDATORY)
 
 ```
-# Before EVERY action - get Q-learning recommendations:
+# STEP 1: Get strategy BEFORE choosing what to attack:
 get_strategy(current_phase="scanning", endpoints_found=5, vulns_found=2)
 
-# After EVERY failure - feed the learning algorithm:
+# STEP 2: After EVERY attempt, record outcome:
 record_failure(endpoint="/login", attack_type="sqli", reason="waf_blocked")
-
-# After EVERY success - reinforce good strategies:
+# OR
 record_success(endpoint="/api", attack_type="sqli", severity="high", exploited=true)
 ```
+
+**NEVER skip recording outcomes - the algorithm learns from them!**
 
 ## 🔥 SPAWN SWARM WORKERS (MANDATORY)
 
