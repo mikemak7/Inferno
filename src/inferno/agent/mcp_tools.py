@@ -1150,6 +1150,79 @@ async def nvd_lookup(args: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+# Global Caido tool instance
+_caido_tool_instance = None
+
+
+@tool(
+    "caido",
+    "Interact with Caido web security proxy for traffic inspection and replay. "
+    "Use this when you need to: inspect captured HTTP traffic, replay requests with "
+    "modifications, or search through traffic history using HTTPQL queries. "
+    "Caido must be running locally. Set CAIDO_AUTH_TOKEN env var for authentication.",
+    {
+        "operation": str,  # status, get_requests, get_request, replay, search
+        "request_id": str,  # Request ID for get_request and replay operations
+        "host_filter": str,  # Filter requests by host
+        "httpql": str,  # HTTPQL query (e.g., "req.method.eq:POST", "resp.status.eq:200")
+        "limit": int,  # Maximum results (default: 20)
+        "modifications": dict,  # Modifications for replay (headers, body, etc.)
+    }
+)
+async def caido_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """Interact with Caido web security proxy."""
+    global _caido_tool_instance
+
+    # Lazy load Caido tool
+    if _caido_tool_instance is None:
+        try:
+            from inferno.tools.caido import CaidoTool
+            _caido_tool_instance = CaidoTool()
+        except ImportError as e:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"Caido tool not available: {e}. Install httpx: pip install httpx"
+                }],
+                "is_error": True
+            }
+
+    try:
+        result = await _caido_tool_instance.execute(
+            operation=args.get("operation", "status"),
+            request_id=args.get("request_id"),
+            host_filter=args.get("host_filter"),
+            httpql=args.get("httpql"),
+            limit=args.get("limit", 20),
+            modifications=args.get("modifications"),
+        )
+
+        if result.success:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": result.output
+                }]
+            }
+        else:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"Caido operation failed: {result.error}"
+                }],
+                "is_error": True
+            }
+    except Exception as e:
+        logger.error("caido_tool_error", error=str(e))
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"Caido error: {e!s}"
+            }],
+            "is_error": True
+        }
+
+
 @tool(
     "register_meta_tool",
     "Register that a custom meta-tool was created. "
@@ -1393,6 +1466,7 @@ def create_inferno_mcp_server():
             read_key_findings,
             # Intelligence tools
             nvd_lookup,
+            caido_tool,  # Caido proxy integration
             # Metacognitive tools
             update_confidence,
             get_metrics,
