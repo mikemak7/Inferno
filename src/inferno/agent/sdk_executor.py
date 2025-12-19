@@ -111,10 +111,17 @@ except ImportError:
 
 # Assessment Scoring - Performance Assessment Framework from paper
 try:
-    from inferno.core.assessment_scoring import AssessmentScorer
+    from inferno.core.assessment_scoring import AssessmentScorer, AssessmentScore
     ASSESSMENT_SCORING_AVAILABLE = True
 except ImportError:
     ASSESSMENT_SCORING_AVAILABLE = False
+
+# Algorithm Manager for cross-session learning
+try:
+    from inferno.algorithms.manager import get_algorithm_manager
+    ALGORITHM_MANAGER_AVAILABLE = True
+except ImportError:
+    ALGORITHM_MANAGER_AVAILABLE = False
 
 ML_SCORING_AVAILABLE = False
 QUALITY_GATES_AVAILABLE = False
@@ -1061,6 +1068,21 @@ START NOW - enumerate, bypass protections, and exploit!
             )
             if result.success and result.output and "No memories found" not in result.output:
                 memories.append(f"### Previous Assessment Progress:\n{result.output}")
+
+            # Search for past assessment scores (cross-session learning)
+            result = await self._memory_tool.execute(
+                operation="search",
+                content=f"{domain} assessment score exploitation",
+                memory_type="assessment_score",
+                limit=3,
+                threshold=0.35,
+            )
+            if result.success and result.output and "No memories found" not in result.output:
+                memories.append(
+                    f"### Previous Assessment Scores:\n{result.output}\n"
+                    f"**NOTE**: Use past exploitation rates to inform your approach. "
+                    f"EXPLOIT findings to get full points - verified-only incurs 20% penalty!"
+                )
 
             if memories:
                 logger.info(
@@ -2616,6 +2638,15 @@ Previous attack '{detected_attack}' appears blocked/failed.
                 # Log human-readable summary
                 score_summary = self._assessment_scorer.get_summary()
                 logger.info("assessment_score_summary", summary=score_summary[:500])
+
+                # PERSIST SCORING TO MEMORY for cross-session learning
+                await self._persist_assessment_score_to_memory(
+                    config.target, final_score, operation_id
+                )
+
+                # Update algorithm learning with exploitation data
+                await self._update_algorithm_with_exploitation_data(final_score)
+
             except Exception as e:
                 logger.warning("assessment_scoring_finalize_failed", error=str(e))
 
@@ -2867,6 +2898,154 @@ Continue the assessment now. Start by recalling memories.""")
             logger.debug("temp_files_cleanup_complete", deleted=deleted_count)
         except Exception as e:
             logger.debug("temp_files_cleanup_error", error=str(e))
+
+    async def _persist_assessment_score_to_memory(
+        self,
+        target: str,
+        score: AssessmentScore,
+        operation_id: str,
+    ) -> None:
+        """
+        Persist assessment score to memory for cross-session learning.
+
+        Stores both episodic (per-target) and semantic (global) memory entries
+        so future assessments can learn from historical exploitation rates.
+
+        Args:
+            target: Target URL/IP being assessed.
+            score: The final AssessmentScore from the assessment.
+            operation_id: Unique operation ID for this assessment.
+        """
+        if not MEMORY_TOOL_AVAILABLE or not self._memory_tool:
+            logger.debug("memory_not_available_for_score_persistence")
+            return
+
+        try:
+            # Build score summary for memory storage
+            score_summary = (
+                f"Assessment Score Summary for {target}\n"
+                f"===================================\n"
+                f"Operation ID: {operation_id}\n"
+                f"Total Score: {score.total_score:.2f}\n"
+                f"Finding Count: {score.finding_count}\n"
+                f"Exploited: {score.exploited_count} ({score.exploitation_rate*100:.1f}%)\n"
+                f"Verified Only: {score.verified_count}\n"
+                f"Severity Breakdown: {score.severity_breakdown}\n"
+                f"Average TC: {score.average_technical_complexity:.2f}\n"
+                f"Max Finding Score: {score.max_single_finding_score:.2f}\n"
+            )
+
+            # Add exploitation penalty notice if applicable
+            if score.verified_count > 0:
+                penalty_findings = score.verified_count
+                score_summary += (
+                    f"\n⚠️ PENALTY APPLIED: {penalty_findings} findings were verified "
+                    f"but not exploited (20% EC penalty applied)\n"
+                )
+
+            # Store in episodic memory (per-target) for target-specific learning
+            await self._memory_tool.execute(
+                operation="store",
+                content=score_summary,
+                memory_type="assessment_score",
+                memory_scope="episodic",
+                target=target,
+                metadata={
+                    "total_score": score.total_score,
+                    "finding_count": score.finding_count,
+                    "exploited_count": score.exploited_count,
+                    "verified_count": score.verified_count,
+                    "exploitation_rate": score.exploitation_rate,
+                    "operation_id": operation_id,
+                    "assessment_id": score.assessment_id,
+                },
+            )
+
+            # Store in semantic memory (global) for cross-target learning
+            semantic_content = (
+                f"Assessment completed for {target}: "
+                f"Score {score.total_score:.2f}, "
+                f"{score.finding_count} findings, "
+                f"{score.exploitation_rate*100:.1f}% exploitation rate. "
+                f"{'PENALTY APPLIED' if score.verified_count > 0 else 'FULL POINTS'}"
+            )
+            await self._memory_tool.execute(
+                operation="store",
+                content=semantic_content,
+                memory_type="assessment_score",
+                memory_scope="semantic",
+                target=target,
+                metadata={
+                    "total_score": score.total_score,
+                    "exploitation_rate": score.exploitation_rate,
+                    "operation_id": operation_id,
+                },
+            )
+
+            logger.info(
+                "assessment_score_persisted",
+                target=target,
+                total_score=score.total_score,
+                exploitation_rate=score.exploitation_rate,
+            )
+
+        except Exception as e:
+            logger.warning("assessment_score_persistence_failed", error=str(e))
+
+    async def _update_algorithm_with_exploitation_data(
+        self,
+        score: AssessmentScore,
+    ) -> None:
+        """
+        Update algorithm learning with exploitation rate data.
+
+        Feeds the exploitation rate and finding outcomes back into the
+        algorithm manager so Q-Learning and MAB can learn which attack
+        patterns lead to full exploitation vs mere verification.
+
+        Args:
+            score: The final AssessmentScore from the assessment.
+        """
+        if not ALGORITHM_MANAGER_AVAILABLE:
+            logger.debug("algorithm_manager_not_available")
+            return
+
+        try:
+            algorithm_manager = get_algorithm_manager()
+
+            # Record each finding as a learning outcome
+            for finding_score in score.finding_scores:
+                vuln_type = finding_score.vulnerability_type or "unknown"
+                was_exploited = (
+                    finding_score.technical_complexity.exploitation_status.value == "exploited"
+                )
+
+                # Pass exploitation status through context for learning
+                # The reward system will weight exploited findings higher
+                algorithm_manager.record_attack_outcome(
+                    attack_type=vuln_type,
+                    target=score.target,
+                    success=True,  # Finding was found
+                    severity=finding_score.severity.value if finding_score.severity else None,
+                    context={
+                        "exploited": was_exploited,
+                        "exploitation_rate": score.exploitation_rate,
+                        "tc_score": finding_score.technical_complexity.score,
+                    },
+                )
+
+            # Save algorithm states for persistence
+            algorithm_manager.save_all_states()
+
+            logger.info(
+                "algorithm_learning_updated",
+                finding_count=score.finding_count,
+                exploited_count=score.exploited_count,
+                exploitation_rate=score.exploitation_rate,
+            )
+
+        except Exception as e:
+            logger.warning("algorithm_learning_update_failed", error=str(e))
 
     async def chat(
         self,
