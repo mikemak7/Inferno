@@ -2442,7 +2442,9 @@ Previous attack '{detected_attack}' appears blocked/failed.
 
                 # Log segment completion status
                 # Continuable stop reasons (will auto-continue if objective not met)
-                _continuable_reasons = ("max_turns", "end_turn", "unknown")
+                # NOTE: "success" means the response completed normally, NOT that the objective is met!
+                # The objective_met flag is the real indicator of completion.
+                _continuable_reasons = ("max_turns", "end_turn", "unknown", "success")
                 will_continue = (
                     config.auto_continue
                     and stop_reason in _continuable_reasons
@@ -2487,11 +2489,12 @@ Previous attack '{detected_attack}' appears blocked/failed.
                 # - max_turns: hit turn limit, should keep going
                 # - end_turn: model voluntarily stopped (thinks it's done but objective not met)
                 # - unknown: fallback for unrecognized subtypes
+                # - success: response completed normally (does NOT mean objective is met!)
                 # Stop reasons that are TERMINAL (don't continue):
-                # - success: objective explicitly marked as met
                 # - error: something went wrong
                 # - error_max_budget: budget exceeded, can't continue
-                continuable_stop_reasons = ("max_turns", "end_turn", "unknown")
+                # NOTE: The objective_met flag is the real indicator, not the stop_reason!
+                continuable_stop_reasons = ("max_turns", "end_turn", "unknown", "success")
                 while (
                     config.auto_continue
                     and stop_reason in continuable_stop_reasons
