@@ -111,7 +111,7 @@ except ImportError:
 
 # Assessment Scoring - Performance Assessment Framework from paper
 try:
-    from inferno.core.assessment_scoring import AssessmentScorer, AssessmentScore
+    from inferno.core.assessment_scoring import AssessmentScore, AssessmentScorer
     ASSESSMENT_SCORING_AVAILABLE = True
 except ImportError:
     ASSESSMENT_SCORING_AVAILABLE = False
@@ -3000,7 +3000,7 @@ Continue the assessment now. Start by recalling memories.""")
                             self._detected_technologies.add('WordPress')
 
             # whatweb output
-            if 'WhatWeb' in output or 'http://' in output and '[' in output:
+            if 'WhatWeb' in output or ('http://' in output and '[' in output):
                 if 'PHP' in output:
                     self._detected_technologies.add('PHP')
                 if 'Apache' in output:
