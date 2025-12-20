@@ -706,7 +706,9 @@ class HTTPTool(CoreTool):
                                             retry_json = mutation.mutated if json_body else None
                                             retry_form = mutation.mutated if form_data else None
 
-                                            retry_response = await self._shared_client.request(
+                                            # Use class method to get shared client (fixes AttributeError)
+                                            shared_client = await self.get_shared_client()
+                                            retry_response = await shared_client.request(
                                                 method=method,
                                                 url=url,
                                                 headers=headers,

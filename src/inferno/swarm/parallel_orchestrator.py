@@ -42,6 +42,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -54,6 +55,9 @@ from inferno.swarm.agents import SubAgentType
 from inferno.swarm.message_bus import get_message_bus
 
 logger = structlog.get_logger(__name__)
+
+# Pre-compile regex patterns for performance
+_URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
 
 class TaskPriority(int, Enum):
@@ -185,6 +189,11 @@ class ParallelSwarmOrchestrator:
         self._pending_tasks: list[ParallelTask] = []
         self._running_tasks: dict[str, ParallelTask] = {}
         self._completed_tasks: list[ParallelTask] = []
+
+        # Lock for thread-safe access to shared state
+        # This prevents race conditions when parallel workers update context
+        self._context_lock = asyncio.Lock()
+        self._task_lock = asyncio.Lock()
 
         # Shared context across all workers
         self._shared_context: dict[str, Any] = {
@@ -556,7 +565,10 @@ class ParallelSwarmOrchestrator:
 
         task.status = "running"
         task.started_at = datetime.now(UTC)
-        self._running_tasks[task.task_id] = task
+
+        # Thread-safe task tracking
+        async with self._task_lock:
+            self._running_tasks[task.task_id] = task
 
         logger.info(
             "task_starting",
@@ -564,8 +576,9 @@ class ParallelSwarmOrchestrator:
             worker_type=task.worker_type.value,
         )
 
-        # Build context with shared intelligence
-        context_str = self._build_task_context(task)
+        # Build context with shared intelligence (read under lock)
+        async with self._context_lock:
+            context_str = self._build_task_context(task)
 
         try:
             # Create SwarmTool instance
@@ -594,8 +607,8 @@ class ParallelSwarmOrchestrator:
             # Extract findings from result
             task.findings = self._extract_findings(result.output)
 
-            # Update shared context
-            self._update_shared_context(task)
+            # Update shared context (thread-safe)
+            await self._update_shared_context_async(task)
 
             # Fire callback
             if self._on_task_complete:
@@ -625,10 +638,11 @@ class ParallelSwarmOrchestrator:
             )
 
         finally:
-            # Move to completed
-            if task.task_id in self._running_tasks:
-                del self._running_tasks[task.task_id]
-            self._completed_tasks.append(task)
+            # Move to completed (thread-safe)
+            async with self._task_lock:
+                if task.task_id in self._running_tasks:
+                    del self._running_tasks[task.task_id]
+                self._completed_tasks.append(task)
 
     def _build_task_context(self, task: ParallelTask) -> str:
         """Build comprehensive context for a task."""
@@ -696,27 +710,57 @@ class ParallelSwarmOrchestrator:
 
         return findings
 
-    def _update_shared_context(self, task: ParallelTask) -> None:
-        """Update shared context with task results."""
-        # Extract endpoints from result
-        if "endpoint" in task.result.lower() or "url" in task.result.lower():
-            # Simple URL extraction
-            import re
-            urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', task.result)
-            for url in urls[:50]:
-                if url not in self._shared_context['discovered_endpoints']:
-                    self._shared_context['discovered_endpoints'].append(url)
+    async def _update_shared_context_async(self, task: ParallelTask) -> None:
+        """Update shared context with task results (thread-safe).
 
-        # Add findings
+        Uses asyncio.Lock to prevent race conditions when multiple
+        parallel workers update the shared context simultaneously.
+        """
+        async with self._context_lock:
+            # Extract endpoints from result using pre-compiled regex
+            if "endpoint" in task.result.lower() or "url" in task.result.lower():
+                urls = _URL_PATTERN.findall(task.result)
+                existing_endpoints = set(self._shared_context['discovered_endpoints'])
+                for url in urls[:50]:
+                    if url not in existing_endpoints:
+                        self._shared_context['discovered_endpoints'].append(url)
+                        existing_endpoints.add(url)
+
+            # Add findings
+            self._shared_context['findings'].extend(task.findings)
+
+            # Detect WAF
+            result_lower = task.result.lower()
+            if "waf" in result_lower or "firewall" in result_lower:
+                if "cloudflare" in result_lower:
+                    self._shared_context['waf_detected'] = "Cloudflare"
+                elif "akamai" in result_lower:
+                    self._shared_context['waf_detected'] = "Akamai"
+                elif "modsecurity" in result_lower:
+                    self._shared_context['waf_detected'] = "ModSecurity"
+                else:
+                    self._shared_context['waf_detected'] = "Yes (unknown type)"
+
+    def _update_shared_context(self, task: ParallelTask) -> None:
+        """Synchronous wrapper for backward compatibility."""
+        # For non-async contexts, update directly (caller must ensure safety)
+        result_lower = task.result.lower()
+        if "endpoint" in result_lower or "url" in result_lower:
+            urls = _URL_PATTERN.findall(task.result)
+            existing_endpoints = set(self._shared_context['discovered_endpoints'])
+            for url in urls[:50]:
+                if url not in existing_endpoints:
+                    self._shared_context['discovered_endpoints'].append(url)
+                    existing_endpoints.add(url)
+
         self._shared_context['findings'].extend(task.findings)
 
-        # Detect WAF
-        if "waf" in task.result.lower() or "firewall" in task.result.lower():
-            if "cloudflare" in task.result.lower():
+        if "waf" in result_lower or "firewall" in result_lower:
+            if "cloudflare" in result_lower:
                 self._shared_context['waf_detected'] = "Cloudflare"
-            elif "akamai" in task.result.lower():
+            elif "akamai" in result_lower:
                 self._shared_context['waf_detected'] = "Akamai"
-            elif "modsecurity" in task.result.lower():
+            elif "modsecurity" in result_lower:
                 self._shared_context['waf_detected'] = "ModSecurity"
             else:
                 self._shared_context['waf_detected'] = "Yes (unknown type)"

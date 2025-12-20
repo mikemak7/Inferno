@@ -172,7 +172,15 @@ class MCTSEngine:
     2. Expansion: Add one child to leaf node
     3. Simulation: Random rollout from new node
     4. Backpropagation: Update statistics along path
+
+    Memory Management:
+    - Tree is pruned after each search to prevent unbounded growth
+    - Only root-level statistics are retained between searches
+    - Use reset() to fully clear the tree
     """
+
+    # Maximum tree nodes before forced pruning
+    MAX_TREE_NODES = 10000
 
     def __init__(self, config: MCTSConfig | None = None):
         """Initialize MCTS engine.
@@ -183,6 +191,7 @@ class MCTSEngine:
         self.config = config or MCTSConfig()
         self._root: MCTSNode | None = None
         self._total_simulations = 0
+        self._node_count = 0  # Track tree size
 
         # Attack vectors and their base success rates
         self._attack_vectors = {
@@ -197,12 +206,88 @@ class MCTSEngine:
             "xxe": 0.04,
         }
 
+    def reset(self) -> None:
+        """Fully reset the tree to free memory."""
+        if self._root:
+            self._clear_node_recursive(self._root)
+        self._root = None
+        self._node_count = 0
+        logger.debug("mcts_tree_reset", total_simulations=self._total_simulations)
+
+    def _clear_node_recursive(self, node: MCTSNode) -> None:
+        """Recursively clear node references to help GC."""
+        # Clear children first (depth-first)
+        for child in list(node.children.values()):
+            self._clear_node_recursive(child)
+        # Break circular reference
+        node.parent = None
+        node.children.clear()
+        node.untried_actions.clear()
+
+    def prune_tree(self, keep_depth: int = 1) -> int:
+        """Prune tree to conserve memory while keeping statistics.
+
+        Args:
+            keep_depth: How many levels to keep (1 = only root's direct children)
+
+        Returns:
+            Number of nodes pruned
+        """
+        if self._root is None:
+            return 0
+
+        pruned = 0
+
+        def prune_at_depth(node: MCTSNode, current_depth: int) -> int:
+            nonlocal pruned
+            if current_depth >= keep_depth:
+                # Prune all children of this node
+                for child in list(node.children.values()):
+                    pruned += self._count_and_clear_subtree(child)
+                node.children.clear()
+                return 0
+
+            # Recurse into children
+            for child in node.children.values():
+                prune_at_depth(child, current_depth + 1)
+            return 0
+
+        prune_at_depth(self._root, 0)
+        self._node_count = self._count_nodes(self._root)
+
+        logger.debug(
+            "mcts_tree_pruned",
+            nodes_pruned=pruned,
+            nodes_remaining=self._node_count,
+        )
+        return pruned
+
+    def _count_and_clear_subtree(self, node: MCTSNode) -> int:
+        """Count nodes in subtree and clear references."""
+        count = 1
+        for child in list(node.children.values()):
+            count += self._count_and_clear_subtree(child)
+        node.parent = None
+        node.children.clear()
+        node.untried_actions.clear()
+        return count
+
+    def _count_nodes(self, node: MCTSNode | None) -> int:
+        """Count total nodes in tree."""
+        if node is None:
+            return 0
+        count = 1
+        for child in node.children.values():
+            count += self._count_nodes(child)
+        return count
+
     def search(
         self,
         initial_state: AttackTreeState,
         available_actions: list[AttackAction],
         objective: str = "root",
-        iterations: int | None = None
+        iterations: int | None = None,
+        prune_on_complete: bool = True,
     ) -> AttackAction | None:
         """Run MCTS search from initial state.
 
@@ -211,17 +296,23 @@ class MCTSEngine:
             available_actions: Possible actions from this state
             objective: Search objective ("root", "user", "flag")
             iterations: Number of iterations (defaults to config)
+            prune_on_complete: Whether to prune tree after search (saves memory)
 
         Returns:
             Best action to take, or None if no good action found
         """
         iterations = iterations or self.config.max_iterations
 
+        # Clear previous tree if exists (prevents memory accumulation)
+        if self._root is not None:
+            self.reset()
+
         # Initialize root
         self._root = MCTSNode(
             state=initial_state.clone(),
             untried_actions=list(available_actions),
         )
+        self._node_count = 1
 
         for i in range(iterations):
             # Selection
@@ -239,8 +330,23 @@ class MCTSEngine:
 
             self._total_simulations += 1
 
-        # Return best action
-        return self._get_best_action()
+            # Auto-prune if tree gets too large (prevents OOM)
+            if self._node_count > self.MAX_TREE_NODES:
+                logger.debug(
+                    "mcts_auto_prune_triggered",
+                    node_count=self._node_count,
+                    iteration=i,
+                )
+                self.prune_tree(keep_depth=2)
+
+        # Get best action before pruning
+        best_action = self._get_best_action()
+
+        # Prune tree to save memory (keep only root-level stats)
+        if prune_on_complete:
+            self.prune_tree(keep_depth=1)
+
+        return best_action
 
     def _select(self, node: MCTSNode) -> MCTSNode:
         """Select child node using UCT.
@@ -296,6 +402,7 @@ class MCTSEngine:
         )
 
         node.children[action] = child
+        self._node_count += 1  # Track tree size for memory management
         return child
 
     def _simulate(

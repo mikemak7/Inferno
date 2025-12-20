@@ -106,6 +106,17 @@ class AlgorithmManager:
         self._endpoints: list[str] = []
         self._phase: str = "reconnaissance"
 
+        # Running vulnerability counters for O(1) access instead of O(n) counting
+        self._vuln_counts: dict[str, int] = {
+            "low": 0,
+            "medium": 0,
+            "high": 0,
+            "critical": 0,
+        }
+
+        # Track consecutive failures per attack type
+        self._consecutive_failures: dict[str, int] = {}
+
         self._initialized = True
 
         logger.info("algorithm_manager_initialized")
@@ -597,12 +608,23 @@ class AlgorithmManager:
 
             action_type = attack_mapping.get(attack_type.lower(), ActionType.VULN_SCAN)
 
-            # Count vulns from attack outcomes
-            attack_outcomes = self._metrics._attack_outcomes
-            vulns_low = sum(1 for o in attack_outcomes if o.severity == "low" and o.outcome == OutcomeType.SUCCESS)
-            vulns_medium = sum(1 for o in attack_outcomes if o.severity == "medium" and o.outcome == OutcomeType.SUCCESS)
-            vulns_high = sum(1 for o in attack_outcomes if o.severity == "high" and o.outcome == OutcomeType.SUCCESS)
-            vulns_critical = sum(1 for o in attack_outcomes if o.severity == "critical" and o.outcome == OutcomeType.SUCCESS)
+            # Use O(1) running counters instead of O(n) counting
+            # Update counters for this outcome
+            if success and severity:
+                severity_lower = severity.lower()
+                if severity_lower in self._vuln_counts:
+                    self._vuln_counts[severity_lower] += 1
+
+            # Update consecutive failures tracking
+            if success:
+                self._consecutive_failures[attack_type] = 0
+            else:
+                self._consecutive_failures[attack_type] = self._consecutive_failures.get(attack_type, 0) + 1
+
+            vulns_low = self._vuln_counts["low"]
+            vulns_medium = self._vuln_counts["medium"]
+            vulns_high = self._vuln_counts["high"]
+            vulns_critical = self._vuln_counts["critical"]
 
             # Build current state from context
             # Detect tech stack from stored endpoints/context
@@ -622,7 +644,7 @@ class AlgorithmManager:
                 phase=self._phase_to_enum(self._phase),
                 turns_elapsed=0,
                 turns_since_finding=0,
-                consecutive_failures=self._consecutive_failures.get(attack_type, 0) if hasattr(self, '_consecutive_failures') else 0,
+                consecutive_failures=self._consecutive_failures.get(attack_type, 0),
                 has_php="php" in tech_stack_str,
                 has_java="java" in tech_stack_str,
                 has_python="python" in tech_stack_str,

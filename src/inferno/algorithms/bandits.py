@@ -215,7 +215,11 @@ class UCB1Selector(SelectionAlgorithm[str]):
         self,
         available_actions: list[str]
     ) -> dict[str, float]:
-        """Get UCB scores for all actions."""
+        """Get UCB scores for all actions.
+
+        Uses same formula as select() to ensure consistency:
+        UCB1: Q(a) + c * sqrt(ln(N) / n(a))
+        """
         if self._total_pulls == 0:
             return dict.fromkeys(available_actions, 1.0)
 
@@ -229,8 +233,11 @@ class UCB1Selector(SelectionAlgorithm[str]):
                     scores[action] = float("inf")
                 else:
                     exploitation = arm.mean_reward
-                    exploration = math.sqrt(
-                        self._exploration_factor * math.log(self._total_pulls) / arm.pulls
+                    # FIXED: exploration_factor OUTSIDE sqrt (matching select() formula)
+                    # Was: sqrt(exploration_factor * ln(N) / n(a)) - WRONG
+                    # Now: exploration_factor * sqrt(ln(N) / n(a)) - CORRECT
+                    exploration = self._exploration_factor * math.sqrt(
+                        math.log(self._total_pulls) / arm.pulls
                     )
                     scores[action] = exploitation + exploration
 
@@ -256,9 +263,12 @@ class UCB1Selector(SelectionAlgorithm[str]):
         self._total_pulls = state.parameters.get("total_pulls", 0)
         self._arms = {}
         for item in state.history:
-            action = item.pop("action", None)
+            # Use get() instead of pop() to avoid mutating the input state
+            action = item.get("action")
             if action:
-                self._arms[action] = ArmStats.from_dict(item)
+                # Create a copy without 'action' key for ArmStats
+                arm_data = {k: v for k, v in item.items() if k != "action"}
+                self._arms[action] = ArmStats.from_dict(arm_data)
 
 
 class ThompsonSampling(SelectionAlgorithm[str]):
@@ -451,9 +461,11 @@ class ThompsonSampling(SelectionAlgorithm[str]):
         self._prior_failures = state.parameters.get("prior_failures", 1)
         self._arms = {}
         for item in state.history:
-            action = item.pop("action", None)
+            # Use get() instead of pop() to avoid mutating the input state
+            action = item.get("action")
             if action:
-                self._arms[action] = ArmStats.from_dict(item)
+                arm_data = {k: v for k, v in item.items() if k != "action"}
+                self._arms[action] = ArmStats.from_dict(arm_data)
 
 
 class ContextualBandit(SelectionAlgorithm[str]):

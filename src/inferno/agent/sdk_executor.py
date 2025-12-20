@@ -328,9 +328,9 @@ class SDKAgentExecutor:
         # Report Generator
         self._report_generator = ReportGenerator(output_dir=self._output_dir)
         self._report = self._report_generator.create_report(
-            target=settings.target if settings else "unknown",
-            objective=settings.objective if settings else "unknown",
-            assessor="Inferno AI",
+            operation_id=self._agent_id,
+            target="unknown",
+            objective="unknown",
         )
 
         self._assessment_scorer: AssessmentScorer | None = None  # Initialized per-run
@@ -1696,6 +1696,10 @@ The system automatically monitors progress and can suggest when to try different
 
         # Set subagent limit from config
         self._max_subagents = config.max_subagents
+
+        # Update report metadata with actual config
+        self._report.metadata.target = config.target
+        self._report.metadata.objective = config.objective
 
         # Create output directory with sanitized target name
         artifacts_dir = self._settings.get_artifacts_dir(config.target, operation_id)

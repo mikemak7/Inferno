@@ -149,18 +149,32 @@ class MessageBus:
         Args:
             agent_id: Unique agent identifier
         """
+        pending_messages: list[Message] = []
+
         async with self._lock:
             self._agents.add(agent_id)
 
-            # Deliver any pending messages
+            # Collect any pending messages for delivery
             if agent_id in self._pending:
-                pending = self._pending.pop(agent_id)
+                pending_messages = list(self._pending.pop(agent_id))
                 logger.info(
                     "delivering_pending_messages",
                     agent_id=agent_id,
-                    count=len(pending),
+                    count=len(pending_messages),
                 )
-                # Messages will be delivered through subscriptions
+
+        # Deliver pending messages OUTSIDE the lock to prevent deadlocks
+        # This actually delivers the messages that were queued for this agent
+        for message in pending_messages:
+            try:
+                await self._deliver(message)
+            except Exception as e:
+                logger.error(
+                    "pending_message_delivery_failed",
+                    message_id=message.message_id,
+                    agent_id=agent_id,
+                    error=str(e),
+                )
 
         logger.debug("agent_registered", agent_id=agent_id)
 

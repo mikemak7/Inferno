@@ -357,6 +357,9 @@ When tool results include suggestions like "IMMEDIATE NEXT STEPS" or "Suggested 
         console.print(f"[magenta]│[/magenta] [bold cyan]» Starting {config.name}[/bold cyan]")
         console.print(f"[magenta]│[/magenta]   [dim]{task[:80]}...[/dim]")
 
+        # Track temp directory for cleanup
+        subagent_cwd: str | None = None
+
         try:
             # Import Claude SDK
             from claude_agent_sdk import (
@@ -414,7 +417,8 @@ When tool results include suggestions like "IMMEDIATE NEXT STEPS" or "Suggested 
             # Configure SDK options for subagent
             # Note: cwd is required for built-in Bash tool to work
             import tempfile
-            subagent_cwd = tempfile.mkdtemp(prefix=f"inferno_subagent_{agent_type}_")
+            import shutil
+            subagent_cwd = tempfile.mkdtemp(prefix=f"inferno_subagent_{agent_type}_")  # Cleaned up in finally
 
             # Set up authentication for Claude Agent SDK
             from inferno.auth import setup_sdk_auth
@@ -652,6 +656,20 @@ Continue now."""
                 output="",
                 error=f"Sub-agent execution failed: {e}",
             )
+
+        finally:
+            # Clean up temp directory to prevent disk exhaustion
+            if subagent_cwd:
+                try:
+                    import shutil
+                    shutil.rmtree(subagent_cwd, ignore_errors=True)
+                    logger.debug("subagent_temp_cleaned", path=subagent_cwd)
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "subagent_temp_cleanup_failed",
+                        path=subagent_cwd,
+                        error=str(cleanup_error),
+                    )
 
     def get_active_subagents(self) -> list[str]:
         """Get list of active sub-agent IDs."""
