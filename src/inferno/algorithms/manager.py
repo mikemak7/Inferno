@@ -574,6 +574,104 @@ class AlgorithmManager:
         )
         self._metrics.record_attack_outcome(attack_outcome)
 
+        # Update Q-learning with the outcome
+        try:
+            from inferno.algorithms.qlearning import (
+                ActionType,
+                PentestAction,
+                PentestState,
+            )
+
+            # Map attack_type string to ActionType enum
+            attack_mapping = {
+                "sqli": ActionType.SQLI_TEST,
+                "xss": ActionType.XSS_TEST,
+                "rce": ActionType.RCE_TEST,
+                "lfi": ActionType.LFI_TEST,
+                "ssti": ActionType.SSTI_TEST,
+                "ssrf": ActionType.SSRF_TEST,
+                "auth_bypass": ActionType.AUTH_BYPASS,
+                "xxe": ActionType.SQLI_TEST,  # Map to similar
+                "other": ActionType.VULN_SCAN,
+            }
+
+            action_type = attack_mapping.get(attack_type.lower(), ActionType.VULN_SCAN)
+
+            # Count vulns from attack outcomes
+            attack_outcomes = self._metrics._attack_outcomes
+            vulns_low = sum(1 for o in attack_outcomes if o.severity == "low" and o.outcome == OutcomeType.SUCCESS)
+            vulns_medium = sum(1 for o in attack_outcomes if o.severity == "medium" and o.outcome == OutcomeType.SUCCESS)
+            vulns_high = sum(1 for o in attack_outcomes if o.severity == "high" and o.outcome == OutcomeType.SUCCESS)
+            vulns_critical = sum(1 for o in attack_outcomes if o.severity == "critical" and o.outcome == OutcomeType.SUCCESS)
+
+            # Build current state from context
+            current_state = PentestState(
+                ports_open=0,
+                services_found=0,
+                endpoints_found=len(self._endpoints),
+                parameters_found=0,
+                vulns_low=vulns_low,
+                vulns_medium=vulns_medium,
+                vulns_high=vulns_high,
+                vulns_critical=vulns_critical,
+                shell_obtained=False,
+                phase=self._phase_to_enum(self._phase),
+                waf_detected=False,
+                has_auth=False,
+                has_sqli_indicators=attack_type == "sqli",
+                has_xss_indicators=attack_type == "xss",
+                has_lfi_indicators=attack_type == "lfi",
+                has_rce_indicators=attack_type == "rce",
+            )
+
+            # Build next state (updated after this action)
+            next_state = PentestState(
+                ports_open=0,
+                services_found=0,
+                endpoints_found=len(self._endpoints),
+                parameters_found=0,
+                vulns_low=vulns_low + (1 if success and severity == "low" else 0),
+                vulns_medium=vulns_medium + (1 if success and severity == "medium" else 0),
+                vulns_high=vulns_high + (1 if success and severity == "high" else 0),
+                vulns_critical=vulns_critical + (1 if success and severity == "critical" else 0),
+                shell_obtained=success and attack_type == "rce",
+                phase=self._phase_to_enum(self._phase),
+                waf_detected=False,
+                has_auth=False,
+                has_sqli_indicators=attack_type == "sqli",
+                has_xss_indicators=attack_type == "xss",
+                has_lfi_indicators=attack_type == "lfi",
+                has_rce_indicators=attack_type == "rce",
+            )
+
+            action = PentestAction(
+                action_type=action_type,
+                target=target,
+                parameters={},
+            )
+
+            # Update Q-learning with this transition
+            self._qlearning.update(
+                state=current_state,
+                action=action,
+                reward=reward,
+                next_state=next_state,
+                done=False,
+            )
+
+            # Save Q-learning state
+            self._state_manager.update_qlearning_state(self._qlearning.get_state())
+
+            logger.debug(
+                "qlearning_updated",
+                attack_type=attack_type,
+                action=action_type.value,
+                reward=reward,
+                success=success,
+            )
+        except Exception as e:
+            logger.warning("qlearning_update_failed", error=str(e))
+
         # Save states
         self._state_manager.update_attack_state(self._attack_selector.get_state())
         self._state_manager.update_bayesian_state(self._bayesian.get_state())
