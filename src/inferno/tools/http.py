@@ -786,7 +786,9 @@ class HTTPTool(CoreTool):
                         payload_context=payload_context,
                     )
 
-                    if diff_result.is_different and diff_result.overall_significance >= 0.5:
+                    # Only show differential analysis for high-significance differences
+                    # to reduce false positives and avoid wasting tokens
+                    if diff_result.is_different and diff_result.overall_significance >= 0.6:
                         intelligence_output.append("")
                         intelligence_output.append("=== DIFFERENTIAL ANALYSIS (Blind Injection Potential) ===")
                         intelligence_output.append(f"  Significance: {diff_result.overall_significance:.0%}")

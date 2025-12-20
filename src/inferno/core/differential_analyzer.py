@@ -145,14 +145,47 @@ class DifferentialAnalyzer:
     - Any vulnerability requiring response comparison
     """
 
-    # Thresholds for significance
-    LENGTH_THRESHOLD_PERCENT = 5.0  # % difference in length to flag
-    TIMING_THRESHOLD_SECONDS = 3.0  # Seconds difference for timing attacks
-    TIMING_THRESHOLD_RATIO = 2.0  # Ratio difference for timing attacks
+    # Thresholds for significance - tuned to reduce false positives
+    LENGTH_THRESHOLD_PERCENT = 15.0  # % difference in length to flag (was 5.0)
+    MIN_LENGTH_DIFF_BYTES = 500  # Minimum absolute byte difference required
+    TIMING_THRESHOLD_SECONDS = 4.0  # Seconds difference for timing attacks (was 3.0)
+    TIMING_THRESHOLD_RATIO = 2.5  # Ratio difference for timing attacks (was 2.0)
+    WORD_COUNT_THRESHOLD = 50  # Minimum word count change to flag (was 10)
+    SIGNIFICANCE_FLOOR = 0.55  # Minimum significance to report
+
+    # Patterns for dynamic content that should be normalized before comparison
+    DYNAMIC_CONTENT_PATTERNS = [
+        r'csrf[_-]?token["\']?\s*[:=]\s*["\'][^"\']+["\']',  # CSRF tokens
+        r'_token["\']?\s*[:=]\s*["\'][^"\']+["\']',  # Laravel tokens
+        r'nonce["\']?\s*[:=]\s*["\'][^"\']+["\']',  # Nonces
+        r'session[_-]?id["\']?\s*[:=]\s*["\'][^"\']+["\']',  # Session IDs
+        r'\b[0-9a-f]{32,64}\b',  # MD5/SHA hashes (likely tokens)
+        r'timestamp["\']?\s*[:=]\s*["\']?\d+',  # Timestamps
+        r'\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}',  # ISO dates
+        r'Date:\s*[A-Za-z]{3},\s+\d+\s+[A-Za-z]{3}\s+\d{4}',  # HTTP dates
+        r'generated[_-]?at["\']?\s*[:=]\s*["\']?[^"\'<>]+',  # Generated timestamps
+        r'request[_-]?id["\']?\s*[:=]\s*["\'][^"\']+["\']',  # Request IDs
+    ]
 
     def __init__(self) -> None:
         """Initialize the differential analyzer."""
         self._baselines: dict[str, ResponseFingerprint] = {}
+        # Pre-compile dynamic content patterns
+        self._dynamic_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.DYNAMIC_CONTENT_PATTERNS
+        ]
+
+    def _normalize_content(self, content: str) -> str:
+        """
+        Normalize content by removing dynamic elements.
+
+        This helps reduce false positives from CSRF tokens, session IDs,
+        timestamps, and other dynamic content that changes on every request.
+        """
+        normalized = content
+        for pattern in self._dynamic_patterns:
+            normalized = pattern.sub("[DYNAMIC]", normalized)
+        return normalized
 
     def store_baseline(
         self,
@@ -204,51 +237,65 @@ class DifferentialAnalyzer:
             )
             differences.append(diff)
 
-        # Length comparison
+        # Length comparison - require BOTH percentage AND absolute byte thresholds
         length_diff = abs(baseline.content_length - test.content_length)
         if baseline.content_length > 0:
             length_percent = (length_diff / baseline.content_length) * 100
         else:
             length_percent = 100 if test.content_length > 0 else 0
 
-        if length_percent >= self.LENGTH_THRESHOLD_PERCENT:
+        # Only flag if BOTH thresholds are exceeded to reduce false positives
+        if (length_percent >= self.LENGTH_THRESHOLD_PERCENT and
+                length_diff >= self.MIN_LENGTH_DIFF_BYTES):
+            # Calculate significance based on how much it exceeds thresholds
+            # More conservative: require bigger changes for higher significance
+            significance = min((length_percent - 10) / 50, 0.9)  # 10-60% maps to 0-0.9
             diff = Difference(
                 diff_type=DifferenceType.LENGTH,
                 baseline_value=baseline.content_length,
                 test_value=test.content_length,
-                significance=min(length_percent / 100, 1.0),
+                significance=max(significance, 0.3),  # Floor at 0.3
                 description=f"Length differs by {length_diff} bytes ({length_percent:.1f}%)",
                 possible_indicator=VulnerabilityIndicator.BOOLEAN_BASED,
             )
             differences.append(diff)
 
-        # Timing comparison
+        # Timing comparison - require BOTH absolute and ratio thresholds
         timing_diff = test.response_time - baseline.response_time
         timing_ratio = test.response_time / max(baseline.response_time, 0.001)
 
-        if (timing_diff >= self.TIMING_THRESHOLD_SECONDS or
-            timing_ratio >= self.TIMING_THRESHOLD_RATIO):
+        # Both conditions must be met for timing-based detection
+        if (timing_diff >= self.TIMING_THRESHOLD_SECONDS and
+                timing_ratio >= self.TIMING_THRESHOLD_RATIO):
+            # Higher significance for larger timing differences
+            significance = min(timing_diff / 8, 1.0)  # 4-12 seconds maps to 0.5-1.0
             diff = Difference(
                 diff_type=DifferenceType.TIMING,
                 baseline_value=baseline.response_time,
                 test_value=test.response_time,
-                significance=min(timing_diff / 10, 1.0),  # Cap at 10 seconds
+                significance=max(significance, 0.6),  # Floor at 0.6 for timing
                 description=f"Response time: {baseline.response_time:.2f}s -> {test.response_time:.2f}s ({timing_ratio:.1f}x)",
                 possible_indicator=VulnerabilityIndicator.TIME_BASED,
             )
             differences.append(diff)
 
-        # Content hash comparison
+        # Content hash comparison - LOW significance by itself (content often changes)
+        # Only flag if we haven't already flagged length difference
+        # Content-only changes are usually dynamic content, not vulnerabilities
         if baseline.content_hash != test.content_hash:
-            diff = Difference(
-                diff_type=DifferenceType.CONTENT,
-                baseline_value=baseline.content_hash[:16],
-                test_value=test.content_hash[:16],
-                significance=0.7,
-                description="Response content differs",
-                possible_indicator=VulnerabilityIndicator.BOOLEAN_BASED,
-            )
-            differences.append(diff)
+            # Only add content diff if there's no length difference (suspicious!)
+            # A page that changes content but not length is more interesting
+            has_length_diff = any(d.diff_type == DifferenceType.LENGTH for d in differences)
+            if not has_length_diff:
+                diff = Difference(
+                    diff_type=DifferenceType.CONTENT,
+                    baseline_value=baseline.content_hash[:16],
+                    test_value=test.content_hash[:16],
+                    significance=0.25,  # Very low - content changes are normal
+                    description="Response content differs (may be dynamic content)",
+                    possible_indicator=VulnerabilityIndicator.BOOLEAN_BASED,
+                )
+                differences.append(diff)
 
         # Error pattern comparison
         new_errors = set(test.error_patterns) - set(baseline.error_patterns)
@@ -266,27 +313,32 @@ class DifferentialAnalyzer:
             differences.append(diff)
 
         # Word count comparison (useful for boolean-based detection)
+        # Require significant word count change to reduce false positives
         word_diff = abs(baseline.word_count - test.word_count)
-        if word_diff > 10:  # Significant word count change
+        if word_diff >= self.WORD_COUNT_THRESHOLD:
+            # Calculate significance based on how much it exceeds threshold
+            significance = min((word_diff - 30) / 150, 0.75)  # 50-200 words maps to 0.13-0.75
             diff = Difference(
                 diff_type=DifferenceType.STRUCTURE,
                 baseline_value=baseline.word_count,
                 test_value=test.word_count,
-                significance=min(word_diff / 100, 0.8),
-                description=f"Word count differs by {word_diff}",
+                significance=max(significance, 0.3),  # Floor at 0.3
+                description=f"Word count differs by {word_diff} words",
                 possible_indicator=VulnerabilityIndicator.BOOLEAN_BASED,
             )
             differences.append(diff)
 
-        # Calculate overall results
-        is_different = len(differences) > 0
-        overall_significance = max((d.significance for d in differences), default=0.0)
+        # Calculate overall results with significance floor filtering
+        # Filter out low-significance differences before computing overall
+        significant_diffs = [d for d in differences if d.significance >= self.SIGNIFICANCE_FLOOR]
+        is_different = len(significant_diffs) > 0
+        overall_significance = max((d.significance for d in significant_diffs), default=0.0)
 
-        # Determine most likely vulnerability type
+        # Determine most likely vulnerability type (only from significant differences)
         likely_vuln = VulnerabilityIndicator.NONE
         vuln_counts: dict[VulnerabilityIndicator, int] = {}
 
-        for diff in differences:
+        for diff in significant_diffs:  # Use filtered list
             if diff.possible_indicator != VulnerabilityIndicator.NONE:
                 vuln_counts[diff.possible_indicator] = vuln_counts.get(
                     diff.possible_indicator, 0
@@ -295,14 +347,15 @@ class DifferentialAnalyzer:
         if vuln_counts:
             likely_vuln = max(vuln_counts, key=lambda k: vuln_counts[k])
 
-        # Generate recommendation
+        # Generate recommendation only for significant differences
         recommendation = self._generate_recommendation(
-            differences, likely_vuln, payload_context
+            significant_diffs, likely_vuln, payload_context
         )
 
+        # Return only significant differences to avoid wasting tokens on noise
         result = DifferentialResult(
             is_different=is_different,
-            differences=differences,
+            differences=significant_diffs,  # Only significant ones
             overall_significance=overall_significance,
             likely_vulnerability=likely_vuln,
             confidence=overall_significance,
