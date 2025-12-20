@@ -243,6 +243,9 @@ class AssessmentConfig:
     enable_parallel_initial_recon: bool = True  # Auto-spawn parallel recon at start
     parallel_recon_agents: list[str] = field(default_factory=lambda: ["reconnaissance", "scanner"])
 
+    # Subagent limits
+    max_subagents: int = 10  # Maximum total subagents that can be spawned
+
     # Guardrails - CAI-inspired security policies
     enable_guardrails: bool = True  # Enable security guardrails
     guardrail_block_on_violation: bool = True  # Block on critical violations
@@ -345,6 +348,7 @@ class SDKAgentExecutor:
         # Swarm enforcement tracking
         self._manual_tool_calls: int = 0  # Count of http_request/execute_command since last swarm
         self._swarm_spawns: int = 0  # Total swarm spawns this session
+        self._max_subagents: int = 10  # Default limit, overridden by config
         self._last_swarm_reminder_turn: int = 0  # Avoid spamming reminders
 
         # Algorithm enforcement tracking
@@ -986,9 +990,9 @@ The algorithm LEARNS from your outcomes. Skipping these calls means:
         # Build enforcement based on current state
         issues = []
 
-        # Check swarm usage
-        if self._manual_tool_calls > 0 and self._swarm_spawns == 0:
-            issues.append(f"⚠️ **{self._manual_tool_calls} manual calls** but no swarm workers spawned")
+        # Encourage spawning if none happened yet (but don't discourage manual testing)
+        if self._swarm_spawns == 0 and self._manual_tool_calls >= 5:
+            issues.append("💡 Consider spawning workers for parallel testing (0 spawned so far)")
 
         # Check algorithm usage
         if self._tool_calls_since_strategy > 0:
@@ -1000,26 +1004,38 @@ The algorithm LEARNS from your outcomes. Skipping these calls means:
         if self._failed_attacks_not_recorded > 0:
             issues.append(f"⚠️ **{self._failed_attacks_not_recorded} failures** not recorded")
 
-        if not issues:
+        # Remind about spawning every 10 turns if under limit
+        spawn_reminder = ""
+        max_subagents = getattr(self, '_max_subagents', 10)
+        if current_turn % 10 == 0 and self._swarm_spawns < max_subagents:
+            spawn_reminder = f"""
+
+### 💡 Workers Available ({self._swarm_spawns}/{max_subagents} spawned)
+Spawn workers to test in parallel while you focus on complex tasks:
+```
+swarm(agent_type="exploiter", task="Exploit [vuln] in [endpoint]", background=true)
+```
+"""
+
+        if not issues and not spawn_reminder:
             return None
 
         reminder = f"""
 ## 🔄 TURN {current_turn} CHECKPOINT
 
-{chr(10).join(issues)}
-
-### REMEMBER THE WORKFLOW:
+{chr(10).join(issues) if issues else "✓ Algorithm usage OK"}
+{spawn_reminder}
+### WORKFLOW REMINDER:
 1. **THINK** → `think(thought="...", thought_type="analysis")`
 2. **GET STRATEGY** → `get_strategy(current_phase="...", endpoints_found=N)`
-3. **SPAWN WORKERS** → `swarm(agent_type="scanner", task="...", background=true)`
+3. **TEST + SPAWN** → Do manual testing AND spawn workers for parallel coverage
 4. **RECORD OUTCOMES** → `record_failure()` or `record_success(exploited=true)`
-
-**This checkpoint helps you stay on track. Use the algorithm tools NOW!**
 """
         logger.info(
             "per_turn_enforcement_triggered",
             turn=current_turn,
             issues_count=len(issues),
+            swarm_spawns=self._swarm_spawns,
         )
         return reminder
 
@@ -1654,6 +1670,9 @@ The system automatically monitors progress and can suggest when to try different
         started_at = datetime.now(UTC)
         operation_id = f"OP_{started_at.strftime('%Y%m%d_%H%M%S')}"
 
+        # Set subagent limit from config
+        self._max_subagents = config.max_subagents
+
         # Create output directory with sanitized target name
         artifacts_dir = self._settings.get_artifacts_dir(config.target, operation_id)
         artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -1882,11 +1901,23 @@ IMPORTANT: Start by searching memory for any previous findings on this target us
 
         # Inject parallel recon results into prompt if available
         if initial_recon_results:
+            # Track these spawns for enforcement
+            self._swarm_spawns += len(initial_recon_results)
+
             recon_summary = "\n\n## PARALLEL INITIAL RECONNAISSANCE RESULTS\n\n"
             recon_summary += "The following intelligence was gathered by parallel recon agents:\n\n"
             for agent_type, findings in initial_recon_results.items():
                 recon_summary += f"### {agent_type.upper()} Agent Findings:\n{findings[:2000]}...\n\n" if len(findings) > 2000 else f"### {agent_type.upper()} Agent Findings:\n{findings}\n\n"
-            recon_summary += "**Use this intelligence to focus your exploitation efforts. Skip basic recon and go straight to vulnerability exploitation!**"
+            recon_summary += """
+**NOW YOU MUST:**
+1. Use `get_strategy()` to decide what to attack
+2. **SPAWN MORE WORKERS** for each discovered endpoint:
+   - `swarm(agent_type="exploiter", task="Exploit SQLi in /api/users", background=true)`
+   - `swarm(agent_type="scanner", task="Deep scan /admin for vulns", background=true)`
+3. Record all outcomes with `record_success()` or `record_failure()`
+
+**DO NOT** test manually - spawn workers for parallel exploitation!
+"""
             prompt += recon_summary
             logger.info(
                 "recon_injected_into_prompt",
@@ -1905,8 +1936,9 @@ IMPORTANT: Start by searching memory for any previous findings on this target us
             configure_swarm(
                 model=config.model or "claude-opus-4-5-20251101",
                 target=config.target,
+                max_subagents=config.max_subagents,
             )
-            logger.info("swarm_tool_configured_for_mcp", target=config.target)
+            logger.info("swarm_tool_configured_for_mcp", target=config.target, max_subagents=config.max_subagents)
 
         except Exception as e:
             logger.error("swarm_configuration_failed", error=str(e))

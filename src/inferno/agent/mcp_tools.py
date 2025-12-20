@@ -111,11 +111,14 @@ def _get_memory_tool():
 _swarm_model = "claude-opus-4-5-20251101"
 _swarm_target = None
 _swarm_configured = False
+_max_subagents = 10  # Default limit
+_current_subagent_count = 0  # Track spawned subagents
 
 
 def configure_swarm(
     model: str = "claude-opus-4-5-20251101",
     target: str | None = None,
+    max_subagents: int = 10,
 ) -> None:
     """
     Configure the swarm tool.
@@ -125,15 +128,19 @@ def configure_swarm(
     Args:
         model: Model to use for subagents
         target: Target URL for context
+        max_subagents: Maximum number of subagents to spawn
     """
-    global _swarm_model, _swarm_target, _swarm_configured
+    global _swarm_model, _swarm_target, _swarm_configured, _max_subagents, _current_subagent_count
     _swarm_model = model
     _swarm_target = target
     _swarm_configured = True
+    _max_subagents = max_subagents
+    _current_subagent_count = 0  # Reset on new configuration
     logger.info(
         "swarm_configured",
         model=model,
         target=target,
+        max_subagents=max_subagents,
     )
 
 
@@ -649,7 +656,17 @@ async def swarm_spawn(args: dict[str, Any]) -> dict[str, Any]:
     When background=true, spawns the worker and returns immediately so the
     main agent can continue working. Use swarm_status to check on workers.
     """
-    global _evaluation_metrics, _background_swarm_tasks, _background_swarm_results
+    global _evaluation_metrics, _background_swarm_tasks, _background_swarm_results, _current_subagent_count, _max_subagents
+
+    # Check subagent limit
+    if _current_subagent_count >= _max_subagents:
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"LIMIT REACHED: Maximum {_max_subagents} subagents allowed. Currently spawned: {_current_subagent_count}. Focus on manual testing or wait for existing workers to complete."
+            }],
+            "is_error": False,  # Not an error, just a limit
+        }
 
     swarm_tool = _get_swarm_tool()
     if swarm_tool is None:
@@ -663,6 +680,7 @@ async def swarm_spawn(args: dict[str, Any]) -> dict[str, Any]:
 
     # Track deployment
     _evaluation_metrics["swarm_deployments"] += 1
+    _current_subagent_count += 1
 
     agent_type = args.get("agent_type", "reconnaissance")
     task = args.get("task", "")
@@ -1333,7 +1351,8 @@ async def execute_command_tool(args: dict[str, Any]) -> dict[str, Any]:
     try:
         from inferno.tools.execute_command import execute_command
 
-        result = await execute_command(
+        # execute_command is a FunctionTool, call its .execute() method
+        result = await execute_command.execute(
             command=args.get("command", ""),
             timeout=args.get("timeout", 120),
             working_dir=args.get("working_dir"),
