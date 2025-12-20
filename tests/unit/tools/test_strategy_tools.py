@@ -28,8 +28,10 @@ from inferno.tools.strategy import (
 
 @pytest.fixture
 def failure_tracker():
-    """Fresh failure tracker instance."""
-    return FailureTracker()
+    """Fresh failure tracker instance with test target set."""
+    tracker = FailureTracker()
+    tracker.set_target("test-target")  # Set a target for scoped tracking
+    return tracker
 
 
 @pytest.fixture
@@ -73,7 +75,8 @@ class TestFailureTracker:
         )
 
         assert "1/3" in result
-        assert failure_tracker._consecutive_failures["/login:sqli"] == 1
+        stats = failure_tracker.get_statistics()
+        assert stats["consecutive_failures"].get("/login:sqli") == 1
         assert not failure_tracker.is_blocked("/login", "sqli")
 
     def test_record_second_failure(self, failure_tracker):
@@ -82,7 +85,8 @@ class TestFailureTracker:
         result = failure_tracker.record_failure("/login", "sqli", "waf_blocked")
 
         assert "2/3" in result
-        assert failure_tracker._consecutive_failures["/login:sqli"] == 2
+        stats = failure_tracker.get_statistics()
+        assert stats["consecutive_failures"].get("/login:sqli") == 2
         assert not failure_tracker.is_blocked("/login", "sqli")
 
     def test_pattern_blocked_after_three_failures(self, failure_tracker):
@@ -93,7 +97,8 @@ class TestFailureTracker:
 
         assert "BLOCKED" in result
         assert failure_tracker.is_blocked("/login", "sqli")
-        assert "/login:sqli" in failure_tracker._blocked_patterns
+        stats = failure_tracker.get_statistics()
+        assert "/login:sqli" in stats["blocked_patterns"]
 
     def test_different_endpoints_independent(self, failure_tracker):
         """Test: Different endpoints are tracked independently."""
@@ -118,18 +123,20 @@ class TestFailureTracker:
         assert not failure_tracker.is_blocked("/login", "xss")
 
     def test_reset_pattern(self, failure_tracker):
-        """Test: Reset pattern removes block and counter."""
+        """Test: Reset pattern removes block and decays counter."""
         # Block a pattern
         failure_tracker.record_failure("/login", "sqli", "waf_blocked")
         failure_tracker.record_failure("/login", "sqli", "waf_blocked")
         failure_tracker.record_failure("/login", "sqli", "waf_blocked")
         assert failure_tracker.is_blocked("/login", "sqli")
 
-        # Reset it
+        # Reset it (now uses decay instead of full reset to prevent oscillation)
         failure_tracker.reset_pattern("/login", "sqli")
 
         assert not failure_tracker.is_blocked("/login", "sqli")
-        assert failure_tracker._consecutive_failures["/login:sqli"] == 0
+        # Note: reset now decays by 2 instead of fully resetting to prevent oscillation
+        stats = failure_tracker.get_statistics()
+        assert stats["consecutive_failures"].get("/login:sqli", 0) <= 1
 
     def test_get_failures_for_endpoint(self, failure_tracker):
         """Test: Get failures returns correct data."""
@@ -296,11 +303,10 @@ class TestRecordFailureTool:
     @pytest.mark.asyncio
     async def test_execute_blocks_after_three(self, record_failure_tool):
         """Test: Pattern blocked after 3 consecutive failures."""
-        # Get fresh tracker for this test
+        # Get fresh tracker for this test and use a unique test target
         tracker = get_failure_tracker()
-        tracker._failures.clear()
-        tracker._blocked_patterns.clear()
-        tracker._consecutive_failures.clear()
+        tracker.set_target("test-execute-blocks")  # Use unique target for isolation
+        tracker.clear_target()  # Clear any existing data for this target
 
         await record_failure_tool.execute("/test1", "sqli", "waf")
         await record_failure_tool.execute("/test1", "sqli", "waf")
@@ -490,9 +496,8 @@ class TestStrategyToolsIntegration:
     async def test_failure_learning_workflow(self):
         """Test: Complete failure learning workflow."""
         tracker = get_failure_tracker()
-        tracker._failures.clear()
-        tracker._blocked_patterns.clear()
-        tracker._consecutive_failures.clear()
+        tracker.set_target("test-learning-workflow")  # Use unique target
+        tracker.clear_target()  # Clear any existing data
 
         record_tool = RecordFailureTool()
         strategy_tool = GetStrategyTool()
@@ -510,15 +515,15 @@ class TestStrategyToolsIntegration:
 
         assert result.success
         # Blocked patterns should be visible
-        assert len(tracker._blocked_patterns) > 0
+        stats = tracker.get_statistics()
+        assert len(stats["blocked_patterns"]) > 0
 
     @pytest.mark.asyncio
     async def test_success_unblocks_pattern(self):
         """Test: Success after failures unblocks pattern."""
         tracker = get_failure_tracker()
-        tracker._failures.clear()
-        tracker._blocked_patterns.clear()
-        tracker._consecutive_failures.clear()
+        tracker.set_target("test-success-unblocks")  # Use unique target
+        tracker.clear_target()  # Clear any existing data
 
         record_failure = RecordFailureTool()
         record_success = RecordSuccessTool()

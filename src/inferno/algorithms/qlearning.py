@@ -385,6 +385,7 @@ class QLearningAgent(ReinforcementLearner):
         epsilon: float = 1.0,
         epsilon_decay: float = 0.995,
         epsilon_min: float = 0.1,
+        epsilon_decay_interval: int = 10,
         replay_buffer_size: int = 10000,
         batch_size: int = 32,
         reward_mode: str = "ctf",
@@ -395,8 +396,9 @@ class QLearningAgent(ReinforcementLearner):
             learning_rate: Learning rate (alpha)
             discount_factor: Discount factor (gamma)
             epsilon: Initial exploration rate
-            epsilon_decay: Epsilon decay per episode
+            epsilon_decay: Epsilon decay multiplier
             epsilon_min: Minimum epsilon value
+            epsilon_decay_interval: Decay epsilon every N updates (not episode end)
             replay_buffer_size: Size of experience replay buffer
             batch_size: Batch size for replay learning
             reward_mode: "ctf" or "bug_bounty"
@@ -406,6 +408,7 @@ class QLearningAgent(ReinforcementLearner):
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
+        self.epsilon_decay_interval = epsilon_decay_interval
         self.batch_size = batch_size
 
         # Feature dimension (from PentestState.to_feature_vector)
@@ -528,18 +531,26 @@ class QLearningAgent(ReinforcementLearner):
 
         self._total_updates += 1
 
-        # Decay epsilon
+        # Track episodes (for logging)
         if done:
             self._episodes += 1
+
+        # Decay epsilon periodically (every N updates) instead of only on done
+        # This ensures exploration decreases even in continuous learning settings
+        # where explicit episode boundaries don't exist
+        if self._total_updates % self.epsilon_decay_interval == 0:
+            old_epsilon = self.epsilon
             self.epsilon = max(
                 self.epsilon_min,
                 self.epsilon * self.epsilon_decay
             )
-            logger.debug(
-                "qlearning_episode_end",
-                episodes=self._episodes,
-                epsilon=self.epsilon,
-            )
+            if old_epsilon != self.epsilon:
+                logger.debug(
+                    "qlearning_epsilon_decay",
+                    updates=self._total_updates,
+                    old_epsilon=old_epsilon,
+                    new_epsilon=self.epsilon,
+                )
 
     def _update_weights(
         self,

@@ -138,14 +138,18 @@ class UCB1Selector(SelectionAlgorithm[str]):
                 return action
 
         # Calculate UCB scores
+        # UCB1 formula: Q(a) + c * sqrt(ln(N) / n(a))
+        # where c is exploration_factor (typically sqrt(2) ≈ 1.41 or 2.0)
         best_action = None
         best_score = float("-inf")
 
         for action in available_actions:
             arm = self._arms[action]
             exploitation = arm.mean_reward
-            exploration = math.sqrt(
-                self._exploration_factor * math.log(self._total_pulls) / arm.pulls
+            # FIXED: exploration_factor should be OUTSIDE sqrt, not inside
+            # Standard UCB1: c * sqrt(ln(N) / n(a))
+            exploration = self._exploration_factor * math.sqrt(
+                math.log(self._total_pulls) / arm.pulls
             )
             score = exploitation + exploration
 

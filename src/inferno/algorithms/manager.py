@@ -17,7 +17,7 @@ from inferno.algorithms.bandits import (
     ThompsonSampling,
     UCB1Selector,
 )
-from inferno.algorithms.base import OutcomeType, compute_reward
+from inferno.algorithms.base import OutcomeType, compute_reward, normalize_reward
 from inferno.algorithms.bayesian import (
     BayesianConfidence,
     EvidenceObservation,
@@ -495,8 +495,8 @@ class AlgorithmManager:
             severity_counts.get("low", 0) * 0.5
         )
 
-        # Update agent selector
-        normalized_reward = min(1.0, max(0.0, (reward + 10) / 110))  # Normalize
+        # Update agent selector with properly normalized reward
+        normalized_reward = normalize_reward(reward)  # Uses standard [-10, 100] -> [0, 1]
         self._agent_selector.update(agent_type, normalized_reward, ctx)
 
         # Update budget allocator
@@ -544,8 +544,8 @@ class AlgorithmManager:
             severity=severity,
         )
 
-        # Normalize for bandit
-        normalized_reward = min(1.0, max(0.0, (reward + 1) / 12))
+        # Normalize for bandit using consistent normalization
+        normalized_reward = normalize_reward(reward)  # Uses standard [-10, 100] -> [0, 1]
 
         # Update attack selector
         self._attack_selector.update(attack_type, normalized_reward, ctx)
@@ -605,6 +605,8 @@ class AlgorithmManager:
             vulns_critical = sum(1 for o in attack_outcomes if o.severity == "critical" and o.outcome == OutcomeType.SUCCESS)
 
             # Build current state from context
+            # Detect tech stack from stored endpoints/context
+            tech_stack_str = " ".join(self._tech_stack).lower() if hasattr(self, '_tech_stack') and self._tech_stack else ""
             current_state = PentestState(
                 ports_open=0,
                 services_found=0,
@@ -615,13 +617,17 @@ class AlgorithmManager:
                 vulns_high=vulns_high,
                 vulns_critical=vulns_critical,
                 shell_obtained=False,
+                root_obtained=False,
+                credentials_found=0,
                 phase=self._phase_to_enum(self._phase),
-                waf_detected=False,
-                has_auth=False,
-                has_sqli_indicators=attack_type == "sqli",
-                has_xss_indicators=attack_type == "xss",
-                has_lfi_indicators=attack_type == "lfi",
-                has_rce_indicators=attack_type == "rce",
+                turns_elapsed=0,
+                turns_since_finding=0,
+                consecutive_failures=self._consecutive_failures.get(attack_type, 0) if hasattr(self, '_consecutive_failures') else 0,
+                has_php="php" in tech_stack_str,
+                has_java="java" in tech_stack_str,
+                has_python="python" in tech_stack_str,
+                has_node="node" in tech_stack_str or "express" in tech_stack_str,
+                has_database=any(db in tech_stack_str for db in ["mysql", "postgres", "mongo", "sql", "redis"]),
             )
 
             # Build next state (updated after this action)
@@ -635,13 +641,17 @@ class AlgorithmManager:
                 vulns_high=vulns_high + (1 if success and severity == "high" else 0),
                 vulns_critical=vulns_critical + (1 if success and severity == "critical" else 0),
                 shell_obtained=success and attack_type == "rce",
+                root_obtained=False,
+                credentials_found=0,
                 phase=self._phase_to_enum(self._phase),
-                waf_detected=False,
-                has_auth=False,
-                has_sqli_indicators=attack_type == "sqli",
-                has_xss_indicators=attack_type == "xss",
-                has_lfi_indicators=attack_type == "lfi",
-                has_rce_indicators=attack_type == "rce",
+                turns_elapsed=0,
+                turns_since_finding=0 if success else 1,
+                consecutive_failures=0 if success else (current_state.consecutive_failures + 1),
+                has_php=current_state.has_php,
+                has_java=current_state.has_java,
+                has_python=current_state.has_python,
+                has_node=current_state.has_node,
+                has_database=current_state.has_database,
             )
 
             action = PentestAction(

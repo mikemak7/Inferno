@@ -35,12 +35,55 @@ logger = structlog.get_logger(__name__)
 
 # Global failure tracker for learning from mistakes
 class FailureTracker:
-    """Track failures to avoid repeating the same mistakes."""
+    """Track failures to avoid repeating the same mistakes.
+
+    Failure tracking is target-scoped to prevent cross-target pollution:
+    - Patterns blocked on Target A don't affect Target B
+    - When switching targets, failure state is isolated
+    - Cross-target learning is preserved but scoped appropriately
+    """
 
     def __init__(self):
-        self._failures: dict[str, list[dict]] = {}  # endpoint -> list of failure info
-        self._blocked_patterns: set[str] = set()
-        self._consecutive_failures: dict[str, int] = {}  # pattern -> count
+        self._current_target: str = ""
+        # Target-scoped storage: target -> {endpoint -> list of failures}
+        self._failures_by_target: dict[str, dict[str, list[dict]]] = {}
+        # Target-scoped blocked patterns: target -> set of blocked keys
+        self._blocked_by_target: dict[str, set[str]] = {}
+        # Target-scoped consecutive failures: target -> {pattern -> count}
+        self._consecutive_by_target: dict[str, dict[str, int]] = {}
+
+    def set_target(self, target: str) -> None:
+        """Set the current target for scoped failure tracking.
+
+        Call this when starting work on a new target to ensure
+        failure patterns are properly isolated.
+        """
+        if target != self._current_target:
+            self._current_target = target
+            # Initialize storage for new target if needed
+            if target not in self._failures_by_target:
+                self._failures_by_target[target] = {}
+                self._blocked_by_target[target] = set()
+                self._consecutive_by_target[target] = {}
+            logger.debug("failure_tracker_target_set", target=target)
+
+    def _get_target_failures(self) -> dict[str, list[dict]]:
+        """Get failures dict for current target."""
+        if self._current_target not in self._failures_by_target:
+            self._failures_by_target[self._current_target] = {}
+        return self._failures_by_target[self._current_target]
+
+    def _get_target_blocked(self) -> set[str]:
+        """Get blocked patterns set for current target."""
+        if self._current_target not in self._blocked_by_target:
+            self._blocked_by_target[self._current_target] = set()
+        return self._blocked_by_target[self._current_target]
+
+    def _get_target_consecutive(self) -> dict[str, int]:
+        """Get consecutive failures dict for current target."""
+        if self._current_target not in self._consecutive_by_target:
+            self._consecutive_by_target[self._current_target] = {}
+        return self._consecutive_by_target[self._current_target]
 
     def record_failure(
         self,
@@ -51,11 +94,14 @@ class FailureTracker:
     ) -> str:
         """Record a failure and return guidance."""
         key = f"{endpoint}:{attack_type}"
+        failures = self._get_target_failures()
+        blocked = self._get_target_blocked()
+        consecutive = self._get_target_consecutive()
 
-        if endpoint not in self._failures:
-            self._failures[endpoint] = []
+        if endpoint not in failures:
+            failures[endpoint] = []
 
-        self._failures[endpoint].append({
+        failures[endpoint].append({
             "attack_type": attack_type,
             "reason": reason,
             "payload": payload,
@@ -63,22 +109,22 @@ class FailureTracker:
         })
 
         # Track consecutive failures
-        self._consecutive_failures[key] = self._consecutive_failures.get(key, 0) + 1
+        consecutive[key] = consecutive.get(key, 0) + 1
 
         # Block pattern after 3 consecutive failures
-        if self._consecutive_failures[key] >= 3:
-            self._blocked_patterns.add(key)
+        if consecutive[key] >= 3:
+            blocked.add(key)
             return f"BLOCKED: Pattern {key} blocked after 3 consecutive failures. Try different approach."
 
-        return f"Failure recorded ({self._consecutive_failures[key]}/3). Consider: {self._get_alternative(attack_type, reason)}"
+        return f"Failure recorded ({consecutive[key]}/3). Consider: {self._get_alternative(attack_type, reason)}"
 
     def is_blocked(self, endpoint: str, attack_type: str) -> bool:
-        """Check if a pattern is blocked."""
-        return f"{endpoint}:{attack_type}" in self._blocked_patterns
+        """Check if a pattern is blocked for current target."""
+        return f"{endpoint}:{attack_type}" in self._get_target_blocked()
 
     def get_failures_for_endpoint(self, endpoint: str) -> list[dict]:
-        """Get all failures for an endpoint."""
-        return self._failures.get(endpoint, [])
+        """Get all failures for an endpoint on current target."""
+        return self._get_target_failures().get(endpoint, [])
 
     def _get_alternative(self, attack_type: str, reason: str) -> str:
         """Suggest alternative approaches based on failure type."""
@@ -101,19 +147,48 @@ class FailureTracker:
         return alternatives.get(attack_type, "Try alternative techniques or different endpoint")
 
     def reset_pattern(self, endpoint: str, attack_type: str) -> None:
-        """Reset a blocked pattern (after successful bypass)."""
+        """Reset a blocked pattern for current target (after successful bypass).
+
+        Note: Uses decay instead of full reset to prevent oscillation where
+        one success causes repeated failures to be retried.
+        """
         key = f"{endpoint}:{attack_type}"
-        self._blocked_patterns.discard(key)
-        self._consecutive_failures[key] = 0
+        blocked = self._get_target_blocked()
+        consecutive = self._get_target_consecutive()
+
+        blocked.discard(key)
+        # Decay by 2 instead of full reset to prevent oscillation
+        # (e.g., 3 failures -> 1 success -> 3 failures -> 1 success...)
+        if key in consecutive:
+            consecutive[key] = max(0, consecutive[key] - 2)
 
     def get_statistics(self) -> dict[str, Any]:
-        """Get failure statistics."""
+        """Get failure statistics for current target."""
+        failures = self._get_target_failures()
+        blocked = self._get_target_blocked()
+        consecutive = self._get_target_consecutive()
+
         return {
-            "total_failures": sum(len(f) for f in self._failures.values()),
-            "blocked_patterns": list(self._blocked_patterns),
-            "endpoints_tested": len(self._failures),
-            "consecutive_failures": dict(self._consecutive_failures),
+            "current_target": self._current_target,
+            "total_failures": sum(len(f) for f in failures.values()),
+            "blocked_patterns": list(blocked),
+            "endpoints_tested": len(failures),
+            "consecutive_failures": dict(consecutive),
         }
+
+    def clear_target(self, target: str | None = None) -> None:
+        """Clear failure data for a specific target or current target.
+
+        Useful when starting a fresh assessment of a previously tested target.
+        """
+        target = target or self._current_target
+        if target in self._failures_by_target:
+            del self._failures_by_target[target]
+        if target in self._blocked_by_target:
+            del self._blocked_by_target[target]
+        if target in self._consecutive_by_target:
+            del self._consecutive_by_target[target]
+        logger.debug("failure_tracker_target_cleared", target=target)
 
 
 # Global instance
@@ -123,6 +198,14 @@ _failure_tracker = FailureTracker()
 def get_failure_tracker() -> FailureTracker:
     """Get the global failure tracker."""
     return _failure_tracker
+
+
+def set_failure_tracker_target(target: str) -> None:
+    """Set the target for the global failure tracker.
+
+    Call this when starting work on a new target.
+    """
+    _failure_tracker.set_target(target)
 
 
 class GetStrategyTool(CoreTool):
@@ -233,10 +316,11 @@ class GetStrategyTool(CoreTool):
             }
             state.phase = phase_map.get(current_phase, PentestPhase.RECONNAISSANCE)
 
-            # Get recommendations from Q-learning
-            from inferno.algorithms.qlearning import QLearningAgent
-            qlearning = QLearningAgent()
-            recommendations = qlearning.get_action_recommendations(state, top_k=5)
+            # Get recommendations from Q-learning using the singleton manager
+            # CRITICAL: Use the shared instance to get learned Q-values
+            from inferno.algorithms.manager import get_algorithm_manager
+            manager = get_algorithm_manager()
+            recommendations = manager._qlearning.get_action_recommendations(state, top_k=5)
 
             # Get failure statistics
             failure_stats = _failure_tracker.get_statistics()
