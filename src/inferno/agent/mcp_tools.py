@@ -1226,6 +1226,169 @@ async def caido_tool(args: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+# -------------------------------------------------------------------------
+# Core Testing Tools (MCP wrappers for sub-agents)
+# -------------------------------------------------------------------------
+# These wrap the core Inferno tools so sub-agents can access them via MCP
+
+@tool(
+    "http_request",
+    "Make HTTP requests to test web applications. Supports all HTTP methods, "
+    "headers, body data, cookies, and proxy configuration. Use for testing "
+    "endpoints, sending payloads, and analyzing responses.",
+    {
+        "url": str,  # Target URL (required)
+        "method": str,  # HTTP method: GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD (default: GET)
+        "headers": dict,  # Custom headers as key-value pairs
+        "body": str,  # Request body (for POST, PUT, PATCH)
+        "json_body": dict,  # JSON body (auto-sets Content-Type)
+        "cookies": dict,  # Cookies as key-value pairs
+        "timeout": int,  # Request timeout in seconds (default: 30)
+        "follow_redirects": bool,  # Follow redirects (default: true)
+        "proxy": str,  # Proxy URL (e.g., http://localhost:8080 for Caido)
+    }
+)
+async def http_request_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """Make HTTP requests via MCP for sub-agents."""
+    try:
+        from inferno.tools.http import HTTPTool
+
+        http_tool = HTTPTool()
+        result = await http_tool.execute(
+            url=args.get("url", ""),
+            method=args.get("method", "GET"),
+            headers=args.get("headers"),
+            body=args.get("body"),
+            json_body=args.get("json_body"),
+            cookies=args.get("cookies"),
+            timeout=args.get("timeout", 30),
+            follow_redirects=args.get("follow_redirects", True),
+            proxy=args.get("proxy"),
+        )
+
+        if result.success:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": result.output
+                }]
+            }
+        else:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"HTTP request failed: {result.error}"
+                }],
+                "is_error": True
+            }
+    except Exception as e:
+        logger.error("http_request_tool_error", error=str(e))
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"HTTP request error: {e!s}"
+            }],
+            "is_error": True
+        }
+
+
+@tool(
+    "execute_command",
+    "Execute shell commands for security testing. Supports running tools like "
+    "nmap, gobuster, sqlmap, nuclei, curl, etc. Commands run in a sandbox. "
+    "Use for reconnaissance, scanning, and exploitation.",
+    {
+        "command": str,  # Command to execute (required)
+        "timeout": int,  # Timeout in seconds (default: 120)
+        "cwd": str,  # Working directory
+    }
+)
+async def execute_command_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """Execute commands via MCP for sub-agents."""
+    try:
+        from inferno.tools.execute_command import execute_command
+
+        result = await execute_command(
+            command=args.get("command", ""),
+            timeout=args.get("timeout", 120),
+            cwd=args.get("cwd"),
+        )
+
+        if result.success:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": result.output
+                }]
+            }
+        else:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"Command failed: {result.error}\nOutput: {result.output}"
+                }],
+                "is_error": True
+            }
+    except Exception as e:
+        logger.error("execute_command_tool_error", error=str(e))
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"Command execution error: {e!s}"
+            }],
+            "is_error": True
+        }
+
+
+@tool(
+    "think",
+    "Structured reasoning tool for analysis and decision-making. Use this BEFORE "
+    "complex decisions to organize thoughts. Records reasoning for learning. "
+    "Types: analysis, hypothesis, planning, reflection, decision, breakthrough.",
+    {
+        "thought": str,  # Your reasoning/analysis (required)
+        "thought_type": str,  # Type: analysis, hypothesis, planning, reflection, decision, breakthrough
+        "context": str,  # Additional context (findings, errors, etc.)
+    }
+)
+async def think_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """Structured reasoning via MCP for sub-agents."""
+    try:
+        from inferno.tools.think import ThinkTool
+
+        think = ThinkTool()
+        result = await think.execute(
+            thought=args.get("thought", ""),
+            thought_type=args.get("thought_type", "analysis"),
+            context=args.get("context"),
+        )
+
+        if result.success:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": result.output
+                }]
+            }
+        else:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"Think failed: {result.error}"
+                }],
+                "is_error": True
+            }
+    except Exception as e:
+        logger.error("think_tool_error", error=str(e))
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"Think error: {e!s}"
+            }],
+            "is_error": True
+        }
+
+
 @tool(
     "register_meta_tool",
     "Register that a custom meta-tool was created. "
@@ -1450,6 +1613,10 @@ def create_inferno_mcp_server():
         name="inferno",
         version="1.0.0",
         tools=[
+            # Core Testing Tools (for sub-agents)
+            http_request_tool,
+            execute_command_tool,
+            think_tool,
             # Strategy & Algorithm Tools (Q-Learning, Bandits, 20% Penalty)
             get_strategy,
             record_failure,

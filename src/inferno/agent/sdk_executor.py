@@ -1363,7 +1363,7 @@ The system automatically monitors progress and can suggest when to try different
                         agent_type=agent_type,
                         task=task,
                         context=f"Target: {config.target}\nObjective: {config.objective}\nMode: Speed is critical - gather intel fast!",
-                        max_turns=10,  # Quick recon
+                        max_turns=50,  # Reasonable for quick recon
                     )
                     if result.success:
                         return (agent_type, result.output)
