@@ -416,6 +416,12 @@ class SDKAgentExecutor:
         self._detected_hints: list = []
         self._waf_detected: bool = False
 
+        # Planned features - initialized as None (not yet implemented)
+        self._diminishing_tracker = None  # DiminishingReturnsTracker
+        self._app_model = None  # ApplicationModel for endpoint tracking
+        self._ml_engine = None  # ML engine for advanced analysis
+        self._chain_enumerator = None  # Exploit chain enumeration
+
     def on_message(self, callback: Callable[[str], None]) -> SDKAgentExecutor:
         """Set callback for assistant messages."""
         self._on_message = callback
