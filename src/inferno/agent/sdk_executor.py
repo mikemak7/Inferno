@@ -241,8 +241,8 @@ class AssessmentConfig:
     diminishing_returns_window: int = 10  # Window size for trend analysis
     diminishing_returns_threshold: float = 0.3  # Success rate decline threshold
 
-    # Parallel initial reconnaissance
-    enable_parallel_initial_recon: bool = True  # Auto-spawn parallel recon at start
+    # Parallel initial reconnaissance (DISABLED - main agent does initial recon first)
+    enable_parallel_initial_recon: bool = False  # Main agent does recon, spawns subagents for specific targets
     parallel_recon_agents: list[str] = field(default_factory=lambda: ["reconnaissance", "scanner"])
 
     # Subagent limits
