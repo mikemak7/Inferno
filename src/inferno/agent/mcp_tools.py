@@ -1235,14 +1235,15 @@ async def caido_tool(args: dict[str, Any]) -> dict[str, Any]:
     "http_request",
     "Make HTTP requests to test web applications. Supports all HTTP methods, "
     "headers, body data, cookies, and proxy configuration. Use for testing "
-    "endpoints, sending payloads, and analyzing responses.",
+    "endpoints, sending payloads, and analyzing responses. "
+    "Pass headers/cookies/json_body as JSON strings, e.g., '{\"Authorization\": \"Bearer token\"}'",
     {
         "url": str,  # Target URL (required)
         "method": str,  # HTTP method: GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD (default: GET)
-        "headers": dict,  # Custom headers as key-value pairs
+        "headers": str,  # Custom headers as JSON string, e.g., '{"Authorization": "Bearer x"}'
         "body": str,  # Request body (for POST, PUT, PATCH)
-        "json_body": dict,  # JSON body (auto-sets Content-Type)
-        "cookies": dict,  # Cookies as key-value pairs
+        "json_body": str,  # JSON body as string (auto-sets Content-Type)
+        "cookies": str,  # Cookies as JSON string, e.g., '{"session": "abc123"}'
         "timeout": int,  # Request timeout in seconds (default: 30)
         "follow_redirects": bool,  # Follow redirects (default: true)
         "proxy": str,  # Proxy URL (e.g., http://localhost:8080 for Caido)
@@ -1251,16 +1252,40 @@ async def caido_tool(args: dict[str, Any]) -> dict[str, Any]:
 async def http_request_tool(args: dict[str, Any]) -> dict[str, Any]:
     """Make HTTP requests via MCP for sub-agents."""
     try:
+        import json as json_module
+
         from inferno.tools.http import HTTPTool
+
+        # Parse JSON string parameters
+        headers = None
+        if args.get("headers"):
+            try:
+                headers = json_module.loads(args["headers"]) if isinstance(args["headers"], str) else args["headers"]
+            except json_module.JSONDecodeError:
+                pass
+
+        cookies = None
+        if args.get("cookies"):
+            try:
+                cookies = json_module.loads(args["cookies"]) if isinstance(args["cookies"], str) else args["cookies"]
+            except json_module.JSONDecodeError:
+                pass
+
+        json_body = None
+        if args.get("json_body"):
+            try:
+                json_body = json_module.loads(args["json_body"]) if isinstance(args["json_body"], str) else args["json_body"]
+            except json_module.JSONDecodeError:
+                pass
 
         http_tool = HTTPTool()
         result = await http_tool.execute(
             url=args.get("url", ""),
             method=args.get("method", "GET"),
-            headers=args.get("headers"),
+            headers=headers,
             body=args.get("body"),
-            json_body=args.get("json_body"),
-            cookies=args.get("cookies"),
+            json_body=json_body,
+            cookies=cookies,
             timeout=args.get("timeout", 30),
             follow_redirects=args.get("follow_redirects", True),
             proxy=args.get("proxy"),
@@ -1300,7 +1325,7 @@ async def http_request_tool(args: dict[str, Any]) -> dict[str, Any]:
     {
         "command": str,  # Command to execute (required)
         "timeout": int,  # Timeout in seconds (default: 120)
-        "cwd": str,  # Working directory
+        "working_dir": str,  # Working directory for command execution
     }
 )
 async def execute_command_tool(args: dict[str, Any]) -> dict[str, Any]:
@@ -1311,7 +1336,7 @@ async def execute_command_tool(args: dict[str, Any]) -> dict[str, Any]:
         result = await execute_command(
             command=args.get("command", ""),
             timeout=args.get("timeout", 120),
-            cwd=args.get("cwd"),
+            working_dir=args.get("working_dir"),
         )
 
         if result.success:
