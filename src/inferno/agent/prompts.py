@@ -293,148 +293,21 @@ class SystemPromptBuilder:
         info = self._budget_info
         return f"""## Resource Budget
 
-- **Turns**: {info['current_turns']}/{info['max_turns']}
-- **Budget Remaining**: {info['budget_percent']}%
+- **Turns**: {info["current_turns"]}/{info["max_turns"]}
+- **Budget Remaining**: {info["budget_percent"]}%
 
 Create checkpoints at 20%, 40%, 60%, and 80% budget usage."""
 
     def _build_swarm_section(self) -> str:
-        """Build swarm worker instructions section."""
-        return """## CRITICAL: ALGORITHM-DRIVEN WORKFLOW
+        """Build swarm worker instructions section - MINIMAL version."""
+        return """## WORKFLOW
 
-**YOUR ROLE**: COORDINATOR. Use algorithms, think strategically, spawn workers.
+1. **get_strategy()** before choosing attacks (Q-learning recommendations)
+2. **record_success/record_failure** after every attempt (algorithm learns)
+3. **swarm(agent_type, task, background=true)** for parallel work
+4. **EXPLOIT** vulnerabilities - verified-only = 20% penalty
 
-### 💭 STEP 1: THINK FIRST (MANDATORY)
-
-Before ANY significant decision, use the `think` tool for structured reasoning:
-```
-think(thought="The login form returns different errors for invalid user vs invalid password. This is username enumeration. I should enumerate valid users first, then brute force passwords.", thought_type="analysis")
-```
-
-Use think for:
-- **analysis**: Analyzing responses, errors, behaviors
-- **planning**: Deciding next steps
-- **hypothesis**: Forming theories about vulnerabilities
-- **reflection**: Reviewing what worked/failed
-
-**DO NOT make complex decisions without calling think() first!**
-
-### 🤖 STEP 2: GET STRATEGY (MANDATORY)
-
-Before choosing what to attack, call `get_strategy`:
-```
-get_strategy(current_phase="scanning", endpoints_found=10, vulns_found=2, tech_stack="php,mysql")
-```
-
-This returns Q-learning ranked actions. **FOLLOW THE RECOMMENDATIONS.**
-The algorithm learns from your successes and failures.
-
-### 📝 STEP 3: RECORD OUTCOMES (NEVER SKIP)
-
-After EVERY attack attempt:
-```
-# On failure:
-record_failure(endpoint="/login", attack_type="sqli", reason="waf_blocked")
-
-# On success - include POC for the report!
-record_success(
-    endpoint="/search",
-    attack_type="sqli",
-    severity="high",
-    exploited=true,
-    title="SQL Injection in Search",
-    description="The search parameter is vulnerable to SQL injection allowing database extraction",
-    evidence="Error: MySQL syntax error near '' at line 1",
-    proof_of_concept="curl 'https://target.com/search?q=1' OR 1=1--'",
-    remediation="Use parameterized queries"
-)
-```
-
-The algorithm LEARNS from these. Skipping them breaks the learning loop.
-
-### 🚨 SCORING PENALTY - EXPLOIT OR LOSE POINTS!
-
-| Status | Score Formula | Example (DC=5, EC=8) |
-|--------|---------------|---------------------|
-| **EXPLOITED** | TC = DC + EC | 5 + 8 = **13.0** ✓ |
-| VERIFIED | TC = DC + EC×0.8 | 5 + 6.4 = 11.4 (-1.6 pts!) |
-
-**DO NOT just detect vulnerabilities - EXPLOIT them for full credit!**
-
-### 🔥 SPAWN SWARM WORKERS IN PARALLEL
-
-| Type | When To Spawn |
-|------|---------------|
-| `reconnaissance` | New subdomain, new endpoint |
-| `scanner` | EACH endpoint, parameter |
-| `exploiter` | EACH confirmed vuln → GET FULL POINTS! |
-| `validator` | EACH finding for verification |
-| `waf_bypass` | Blocked payloads, 403s |
-
-**Spawn 5-10 workers with background=true:**
-```
-swarm(agent_type="exploiter", task="Exploit SQLi in /search to dump DB", background=true)
-swarm(agent_type="exploiter", task="Exploit XSS in /comment for session steal", background=true)
-swarm(agent_type="scanner", task="Deep scan /api/users for IDOR, auth bypass", background=true)
-```
-
-### 📋 MANDATORY WORKFLOW
-
-1. **YOU Discover** → Do initial recon yourself (fetch target, check headers, find endpoints)
-2. **Spawn Scanners** → When you find a specific endpoint, spawn scanner IN BACKGROUND
-3. **Continue Working** → Don't wait - keep discovering while subagents work
-4. **Spawn Exploiters** → For each vulnerability, spawn exploiter IN BACKGROUND
-5. **Validate** → Spawn validator for confirmed findings
-
-### ⚠️ YOU LOSE POINTS IF YOU:
-- Only detect but don't exploit
-- Spawn subagents without doing initial discovery yourself first
-- Wait for subagents instead of continuing to work
-- Don't use `get_strategy` to guide decisions
-- Don't call `record_failure` on failed attacks
-
-### 🎯 ACT ON INTELLIGENCE IMMEDIATELY
-When tool results include sections like:
-- `=== IMMEDIATE NEXT STEPS ===`
-- `=== DIFFERENTIAL ANALYSIS ===`
-- `=== SUGGESTED BYPASSES ===`
-
-**DO NOT IGNORE THESE!** They are high-priority actionable intelligence:
-1. The system detected a potential vulnerability or pattern
-2. Execute the suggested tests immediately
-3. These suggestions come from automated analysis and are worth investigating
-
-### 🔌 CAIDO PROXY INTEGRATION
-
-Use Caido for advanced traffic inspection and request manipulation:
-
-**When to use Caido:**
-- **Complex request analysis** - When you need deep inspection of request/response pairs
-- **Request replay** - To modify and resend captured requests for testing
-- **Traffic search** - Use HTTPQL to find patterns (e.g., `req.body.cont:password`)
-- **Debugging** - When built-in HTTP tool output isn't enough
-
-**Setup at assessment start:**
-```
-caido(operation="setup", assessment_name="pentest-target")
-```
-
-**Route HTTP requests through Caido:**
-```
-http_request(url="https://target.com/api", method="POST", body={"test": "value"}, proxy="http://localhost:8080")
-```
-
-**Search captured traffic:**
-```
-caido(operation="search", httpql="req.method.eq:POST AND req.body.cont:password")
-```
-
-**Replay with modifications:**
-```
-caido(operation="replay", request_id="abc123", modifications={"headers": {"X-Test": "value"}})
-```
-
-**Note:** Caido must be running locally. Start with: `caido-cli --listen 127.0.0.1:8080 --allow-guests`"""
+Agent types: reconnaissance, scanner, exploiter, validator, waf_bypass"""
 
     def _build_environment_section(self) -> str:
         """Build environment context section."""
@@ -450,8 +323,17 @@ caido(operation="replay", request_id="abc123", modifications={"headers": {"X-Tes
 
         # Available security tools
         tools_to_check = [
-            "nmap", "gobuster", "ffuf", "sqlmap", "nuclei", "nikto",
-            "hydra", "wpscan", "curl", "nc", "python3",
+            "nmap",
+            "gobuster",
+            "ffuf",
+            "sqlmap",
+            "nuclei",
+            "nikto",
+            "hydra",
+            "wpscan",
+            "curl",
+            "nc",
+            "python3",
         ]
         tools_available = [t for t in tools_to_check if shutil.which(t)]
 
@@ -581,108 +463,19 @@ def build_aggressive_prompt(
 # ==================== Minimal Prompt System ====================
 # For container-based execution with minimal tools
 
-MINIMAL_SYSTEM_PROMPT = """You are an autonomous penetration testing agent in Kali Linux.
+MINIMAL_SYSTEM_PROMPT = """You are a pentesting agent.
 
-## Objective
-{objective}
+TARGET: {target}
+OBJECTIVE: {objective}
 
-## Target
-{target}
+WORKFLOW:
+1. get_strategy() - get Q-learning attack recommendations
+2. Execute attacks on target
+3. record_success()/record_failure() - log all outcomes
+4. swarm(agent_type, task, background=true) - spawn parallel workers
 
-## Environment
-Kali Linux with full toolkit: nmap, gobuster, sqlmap, nuclei, nikto, hydra, curl, python3
-
-## Wordlists
-/usr/share/seclists/ - Discovery, Fuzzing, Passwords
-
-## 🚨 SCORING: 20% PENALTY FOR NOT EXPLOITING!
-
-| Status | Score | Impact |
-|--------|-------|--------|
-| **EXPLOITED** | DC + EC | FULL POINTS ✓ |
-| VERIFIED | DC + EC×0.8 | -20% PENALTY! |
-
-**DO NOT just detect vulnerabilities - EXPLOIT them!**
-
-## 💭 THINK FIRST (MANDATORY)
-
-Before ANY significant decision, use the `think` tool:
-```
-think(thought="The error message reveals MySQL. I should use MySQL-specific SQLi payloads.", thought_type="analysis")
-```
-
-Use for: analysis, planning, hypothesis, reflection. **Don't decide without thinking!**
-
-## 🤖 USE ALGORITHMS (MANDATORY)
-
-```
-# STEP 1: Get strategy BEFORE choosing what to attack:
-get_strategy(current_phase="scanning", endpoints_found=5, vulns_found=2)
-
-# STEP 2: After EVERY attempt, record outcome:
-record_failure(endpoint="/login", attack_type="sqli", reason="waf_blocked")
-# OR - include full details for report!
-record_success(
-    endpoint="/api",
-    attack_type="sqli",
-    severity="high",
-    exploited=true,
-    title="SQL Injection in API",
-    description="The API endpoint is vulnerable to SQL injection",
-    evidence="Database dump retrieved: admin:password123",
-    proof_of_concept="sqlmap -u 'https://target.com/api?id=1' --dump",
-    remediation="Use parameterized queries and input validation"
-)
-```
-
-**NEVER skip recording outcomes - the algorithm learns from them!**
-
-## 🔥 WORKFLOW: YOU DO RECON, SPAWN FOR EXPLOITATION
-
-**YOU are the main agent. Do initial discovery yourself, then delegate deep work:**
-
-### Phase 1: YOU DO INITIAL RECON (don't spawn yet)
-- Fetch the target URL, analyze response headers, identify tech stack
-- Check robots.txt, sitemap.xml, common endpoints
-- Identify potential attack surfaces (forms, APIs, auth pages)
-- Use `http_request`, `execute_command` for quick discovery
-
-### Phase 2: SPAWN SUBAGENTS FOR SPECIFIC TARGETS
-When you find a specific endpoint worth investigating, spawn a subagent IN BACKGROUND:
-```
-swarm(agent_type="scanner", task="Deep scan /api/users for SQLi, IDOR", background=true)
-swarm(agent_type="exploiter", task="Exploit XSS in /search?q= parameter", background=true)
-```
-
-### Phase 3: CONTINUE WORKING WHILE SUBAGENTS RUN
-- Don't wait for subagents - keep discovering and testing
-- Spawn more subagents as you find more targets
-- Each subagent handles ONE specific target/vulnerability
-
-**KEY RULES:**
-- **YOU** do broad recon and discovery
-- **SUBAGENTS** do deep testing on specific targets you find
-- Always use `background=true` so you can continue working
-- Spawn exploiter for each confirmed vulnerability
-
-## Strategy
-1. `get_strategy` → Get algorithm recommendations
-2. **YOU** do initial recon (tech fingerprint, endpoint discovery)
-3. For each interesting endpoint → spawn scanner in background
-4. For each vuln → spawn **EXPLOITER** in background (for full points!)
-5. Continue testing while subagents work
-6. Synthesize all results and report
-
-## 🔌 CAIDO PROXY (Optional)
-
-If Caido is running, use it for deep traffic analysis:
-```
-caido(operation="setup")  # Auto-authenticate
-http_request(url="...", proxy="http://localhost:8080")  # Route through proxy
-caido(operation="search", httpql="req.body.cont:password")  # Search traffic
-```
-
-Be methodical. Parallelize. EXPLOIT. Get root."""
+EXPLOIT vulnerabilities for full points (verified-only = 20% penalty).
+Agent types: reconnaissance, scanner, exploiter, validator, waf_bypass"""
 
 
 def build_minimal_prompt(target: str, objective: str) -> str:

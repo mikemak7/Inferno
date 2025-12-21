@@ -27,6 +27,7 @@ import structlog
 # Import MITRE ATT&CK mapping
 try:
     from inferno.core.mitre_attack import get_technique_for_vuln
+
     MITRE_AVAILABLE = True
 except ImportError:
     MITRE_AVAILABLE = False
@@ -36,6 +37,7 @@ logger = structlog.get_logger(__name__)
 
 class TaskType(str, Enum):
     """Types of tasks for sub-agents."""
+
     RECON = "recon"
     ENUMERATE = "enumerate"
     EXPLOIT = "exploit"
@@ -47,6 +49,7 @@ class TaskType(str, Enum):
 
 class TechStack(str, Enum):
     """Detected technology stacks."""
+
     PHP = "php"
     PYTHON = "python"
     NODE = "node"
@@ -106,7 +109,10 @@ class TaskContext:
 RECON_TOOLS = {
     "default": [
         ("nmap -sV -sC {target}", "Service detection with default scripts"),
-        ("gobuster dir -u {target} -w /usr/share/wordlists/dirb/common.txt -t 50", "Directory enumeration"),
+        (
+            "gobuster dir -u {target} -w /usr/share/wordlists/dirb/common.txt -t 50",
+            "Directory enumeration",
+        ),
         ("whatweb {target}", "Technology fingerprinting"),
         ("curl -I {target}", "HTTP headers inspection"),
     ],
@@ -120,7 +126,10 @@ RECON_TOOLS = {
         ("curl {target}/api/", "Probe API root"),
     ],
     TechStack.GRAPHQL: [
-        ("curl -X POST {target}/graphql -H 'Content-Type: application/json' -d '{{\"query\":\"{{__schema{{types{{name}}}}}}\"}}' ", "GraphQL introspection"),
+        (
+            "curl -X POST {target}/graphql -H 'Content-Type: application/json' -d '{{\"query\":\"{{__schema{{types{{name}}}}}}\"}}' ",
+            "GraphQL introspection",
+        ),
     ],
 }
 
@@ -179,45 +188,17 @@ VALIDATION_APPROACHES = {
 # Prompt Templates (Minimal, Task-Focused)
 # =============================================================================
 
-CORE_IDENTITY = """You are an autonomous penetration testing agent.
+CORE_IDENTITY = """You are a pentesting agent.
 
 TARGET: {target}
 SCOPE: {scope}
 OBJECTIVE: {objective}
 
 RULES:
-- Stay within scope. Never attack {scope_exclusions}.
-- Prove exploitation, don't just detect.
-- Use tools efficiently. Don't repeat failed approaches.
-- Report findings with evidence.
-
-## MANDATORY WORKFLOW
-
-### 1. THINK FIRST (use `think` tool)
-Before any significant action, use the think tool:
-```
-think(thought="Analyzing target response. The error message reveals MySQL backend. I should test SQLi with MySQL-specific payloads like SLEEP().", thought_type="analysis")
-```
-
-### 2. GET STRATEGY (use `get_strategy` tool)
-Before choosing what to attack, get Q-learning recommendations:
-```
-get_strategy(current_phase="exploitation", endpoints_found=5, vulns_found=1, tech_stack="flask,mysql")
-```
-This returns ranked actions with Q-values. Follow the recommendations.
-
-### 3. RECORD OUTCOMES (ALWAYS)
-After every attack attempt:
-- **Success**: `record_success(endpoint="/login", attack_type="sqli", severity="high", exploited=true)`
-- **Failure**: `record_failure(endpoint="/login", attack_type="sqli", reason="WAF blocked UNION keyword")`
-
-The algorithm learns from these. NEVER skip recording outcomes.
-
-### 4. SCORING PENALTY
-- **EXPLOITED findings**: Full points (DC + EC)
-- **VERIFIED-ONLY findings**: 20% PENALTY (DC + EC×0.8)
-
-Don't just detect - EXPLOIT for full credit."""
+- Stay in scope. Never attack {scope_exclusions}.
+- EXPLOIT vulnerabilities (verified-only = 20% penalty)
+- get_strategy() before attacks, record_success/failure after
+- Don't repeat failed approaches"""
 
 RECON_PROMPT = """
 ## Your Task: Reconnaissance
@@ -386,6 +367,7 @@ Generate the report."""
 # Dynamic Prompt Generator
 # =============================================================================
 
+
 class DynamicPromptGenerator:
     """
     Generates task-specific prompts for sub-agents.
@@ -471,19 +453,31 @@ class DynamicPromptGenerator:
                     tool_hints.append(f"- `{cmd.format(target=context.target)}` - {desc}")
 
         return RECON_PROMPT.format(
-            tool_hints="\n".join(tool_hints) if tool_hints else "Use standard reconnaissance tools.",
+            tool_hints="\n".join(tool_hints)
+            if tool_hints
+            else "Use standard reconnaissance tools.",
         )
 
     def _generate_enumerate_prompt(self, context: TaskContext) -> str:
         """Generate enumeration prompt with tech context."""
         # Format tech stack
-        tech_str = ", ".join([t.value for t in context.tech_stack]) if context.tech_stack else "Unknown"
+        tech_str = (
+            ", ".join([t.value for t in context.tech_stack]) if context.tech_stack else "Unknown"
+        )
 
         # Format endpoints
-        endpoints_str = "\n".join([f"- {ep}" for ep in context.detected_endpoints[:10]]) if context.detected_endpoints else "- Discover endpoints during enumeration"
+        endpoints_str = (
+            "\n".join([f"- {ep}" for ep in context.detected_endpoints[:10]])
+            if context.detected_endpoints
+            else "- Discover endpoints during enumeration"
+        )
 
         # Format focus areas
-        focus_str = "\n".join([f"- {f}" for f in context.focus_areas]) if context.focus_areas else "- Map all parameters\n- Find hidden functionality"
+        focus_str = (
+            "\n".join([f"- {f}" for f in context.focus_areas])
+            if context.focus_areas
+            else "- Map all parameters\n- Find hidden functionality"
+        )
 
         # Get MITRE ATT&CK context
         attack_context = self._get_attack_context_for_recon(context.tech_stack)
@@ -528,7 +522,11 @@ class DynamicPromptGenerator:
                 attack_technique = f"{technique.technique_id} ({technique.name})"
 
         # Format failed attempts
-        failed_str = "\n".join([f"- {f}" for f in context.failed_attempts[:5]]) if context.failed_attempts else "None yet"
+        failed_str = (
+            "\n".join([f"- {f}" for f in context.failed_attempts[:5]])
+            if context.failed_attempts
+            else "None yet"
+        )
 
         # Success criteria based on vuln type
         success_map = {
@@ -554,7 +552,9 @@ class DynamicPromptGenerator:
         """Generate validation prompt."""
         # Extract finding info from hints
         finding_summary = context.hints[0] if context.hints else "Finding details not provided"
-        original_evidence = context.hints[1] if len(context.hints) > 1 else "Check memory for evidence"
+        original_evidence = (
+            context.hints[1] if len(context.hints) > 1 else "Check memory for evidence"
+        )
 
         # Get validation approach based on vuln type
         vuln_type = "unknown"
@@ -564,7 +564,9 @@ class DynamicPromptGenerator:
                     vuln_type = vt
                     break
 
-        validation_approach = VALIDATION_APPROACHES.get(vuln_type, "Re-test with different approach to confirm")
+        validation_approach = VALIDATION_APPROACHES.get(
+            vuln_type, "Re-test with different approach to confirm"
+        )
 
         return VALIDATE_PROMPT.format(
             finding_summary=finding_summary,
@@ -599,7 +601,11 @@ class DynamicPromptGenerator:
     def _generate_report_prompt(self, context: TaskContext) -> str:
         """Generate reporting prompt."""
         # Format findings
-        findings_str = "\n".join([f"- {f}" for f in context.previous_findings]) if context.previous_findings else "Retrieve findings from memory"
+        findings_str = (
+            "\n".join([f"- {f}" for f in context.previous_findings])
+            if context.previous_findings
+            else "Retrieve findings from memory"
+        )
 
         return REPORT_PROMPT.format(findings=findings_str)
 
@@ -612,10 +618,10 @@ class DynamicPromptGenerator:
 {context.custom_instructions if context.custom_instructions else "Complete the specified objective."}
 
 ### Hints
-{chr(10).join(['- ' + h for h in context.hints]) if context.hints else "No specific hints provided."}
+{chr(10).join(["- " + h for h in context.hints]) if context.hints else "No specific hints provided."}
 
 ### Focus Areas
-{chr(10).join(['- ' + f for f in context.focus_areas]) if context.focus_areas else "Use your judgment."}
+{chr(10).join(["- " + f for f in context.focus_areas]) if context.focus_areas else "Use your judgment."}
 
 Execute the task efficiently."""
 
@@ -658,7 +664,9 @@ Execute the task efficiently."""
                     technique_list = get_technique_for_vuln(vuln)
                     if technique_list and len(technique_list) > 0:
                         technique = technique_list[0]
-                        techniques.append(f"- {technique.technique_id}: {technique.name} (common for {tech.value})")
+                        techniques.append(
+                            f"- {technique.technique_id}: {technique.name} (common for {tech.value})"
+                        )
 
         if not techniques:
             techniques.append("- T1190: Exploit Public-Facing Application")
@@ -670,6 +678,7 @@ Execute the task efficiently."""
 # =============================================================================
 # Convenience Functions
 # =============================================================================
+
 
 def generate_prompt(
     task_type: str | TaskType,

