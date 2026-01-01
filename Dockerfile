@@ -95,7 +95,7 @@ RUN pip3 install --upgrade pip setuptools wheel
 WORKDIR /opt/inferno
 
 # Copy requirements first (for Docker layer caching)
-COPY LICENSE pyproject.toml requirements.txt ./
+COPY LICENSE README.md pyproject.toml requirements.txt ./
 
 # Install Python dependencies
 RUN pip3 install -r requirements.txt || pip3 install anthropic httpx structlog rich typer pydantic python-dotenv
