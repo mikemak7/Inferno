@@ -1,0 +1,39 @@
+# Claude API and Agent SDK
+anthropic>=0.40.0
+claude-agent-sdk>=0.1.16
+
+# Memory: Mem0 with Qdrant backend
+mem0ai>=0.1.0
+qdrant-client>=1.7.0
+
+# Embeddings (sentence-transformers is free/local, no API key needed)
+sentence-transformers>=2.2.0
+
+# HTTP & Networking
+httpx>=0.27.0
+aiohttp>=3.9.0
+
+# CLI
+typer[all]>=0.12.0
+rich>=13.7.0
+
+# Configuration
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# Observability (optional but included)
+langfuse>=2.0.0
+
+# Async utilities
+anyio>=4.2.0
+asyncio-throttle>=1.0.0
+
+# Security tool parsing
+defusedxml>=0.7.1
+python-nmap>=0.7.1
+
+# Utilities
+orjson>=3.9.0
+tenacity>=8.2.0
+structlog>=24.1.0
