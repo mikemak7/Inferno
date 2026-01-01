@@ -106,7 +106,7 @@ COPY docs/ ./docs/
 COPY tests/ ./tests/
 
 # Install Inferno in development mode
-RUN pip3 install -e .
+RUN pip3 install --break-system-packages -e .
 
 # ============================================================================
 # DIRECTORIES AND PERMISSIONS
